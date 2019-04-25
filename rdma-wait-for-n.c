@@ -66,8 +66,7 @@ struct app_context{
     struct ibv_context          *context;
     struct ibv_pd               *pd;
     struct ibv_mr               **mr;
-    struct ibv_cq               **rcq;
-    struct ibv_cq               **scq;
+    struct ibv_cq               *cq;
     struct ibv_qp               **qp;
     struct ibv_comp_channel     *ch;
     void                        *buf;
@@ -204,6 +203,10 @@ int main(int argc, char *argv[])
         // printf("Client. Writing to Server\n");
         rdma_write(ctx, &data, 0);
         rdma_write(ctx, &data, 1);
+
+        struct ibv_wc wc;
+        //int n, uint64_t round_nb, struct ibv_cq *cq, int num_entries, struct ibv_wc *wc_array);
+        wait_for_n(2, 42, ctx->cq, 1, &wc);
         
         // printf("Server. Done with write. Reading from client\n");
 
@@ -372,25 +375,19 @@ static struct app_context *init_ctx(struct app_data *data)
     TEST_Z(ctx->ch = ibv_create_comp_channel(ctx->context),
             "Could not create completion channel, ibv_create_comp_channel");
 
-    ctx->rcq = malloc(num_clients * sizeof(struct ibv_cq*));
-    ctx->scq = malloc(num_clients * sizeof(struct ibv_cq*));
     ctx->qp  = malloc(num_clients * sizeof(struct ibv_qp*));
     ctx->mr  = malloc(num_clients * sizeof(struct ibv_mr*));
+    TEST_Z(ctx->cq = ibv_create_cq(ctx->context,ctx->tx_depth, ctx, ctx->ch, 0),
+                "Could not create completion queue, ibv_create_cq"); 
 
     for (int i = num_clients; i >= 0; i--) {
         TEST_Z(ctx->mr[i] = ibv_reg_mr(ctx->pd, ctx->buf, ctx->size * 2, 
                         IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE),
                     "Could not allocate mr, ibv_reg_mr. Do you have root access?");
 
-        TEST_Z(ctx->rcq[i] = ibv_create_cq(ctx->context, 1, NULL, NULL, 0),
-                "Could not create receive completion queue, ibv_create_cq");    
-
-        TEST_Z(ctx->scq[i] = ibv_create_cq(ctx->context,ctx->tx_depth, ctx, ctx->ch, 0),
-                "Could not create send completion queue, ibv_create_cq");
-
         struct ibv_qp_init_attr qp_init_attr = {
-            .send_cq = ctx->scq[i],
-            .recv_cq = ctx->rcq[i],
+            .send_cq = ctx->cq,
+            .recv_cq = ctx->cq,
             .qp_type = IBV_QPT_RC,
             .cap = {
                 .max_send_wr = ctx->tx_depth,
@@ -411,28 +408,26 @@ static struct app_context *init_ctx(struct app_data *data)
 }
 
 static void destroy_ctx(struct app_context *ctx){
-    
+        
     for (int i = 0; i < num_clients; i++) {
         TEST_NZ(ibv_destroy_qp(ctx->qp[i]),
             "Could not destroy queue pair, ibv_destroy_qp");
-        
-        TEST_NZ(ibv_destroy_cq(ctx->scq[i]),
-            "Could not destroy send completion queue, ibv_destroy_cq");
-
-        TEST_NZ(ibv_destroy_cq(ctx->rcq[i]),
-            "Coud not destroy receive completion queue, ibv_destroy_cq");
-
-        TEST_NZ(ibv_dereg_mr(ctx->mr[i]),
-            "Could not de-register memory region, ibv_dereg_mr");
     }
-    
+        
+    TEST_NZ(ibv_destroy_cq(ctx->cq),
+            "Could not destroy completion queue, ibv_destroy_cq");
+
     TEST_NZ(ibv_destroy_comp_channel(ctx->ch),
         "Could not destory completion channel, ibv_destroy_comp_channel");
 
+    for (int i = 0; i < num_clients; ++i) {
+        TEST_NZ(ibv_dereg_mr(ctx->mr[i]),
+                "Could not de-register memory region, ibv_dereg_mr");
+    }
+
     TEST_NZ(ibv_dealloc_pd(ctx->pd),
             "Could not deallocate protection domain, ibv_dealloc_pd");    
-
-
+    
     free(ctx->buf);
     free(ctx);
     
@@ -627,7 +622,7 @@ static void rdma_write(struct app_context *ctx, struct app_data *data, int id){
 
     ctx->wr.wr.rdma.remote_addr = data->remote_connection[id].vaddr;
     ctx->wr.wr.rdma.rkey        = data->remote_connection[id].rkey;
-    ctx->wr.wr_id       = RDMA_WRID;
+    WRID_SET_SSN(ctx->wr.wr_id, 42);
     ctx->wr.sg_list     = &ctx->sge_list;
     ctx->wr.num_sge     = 1;
     ctx->wr.opcode      = IBV_WR_RDMA_WRITE;
@@ -654,29 +649,29 @@ static void rdma_write(struct app_context *ctx, struct app_data *data, int id){
 
     // Conrols if message was competely sent. But fails if client destroys his context to early. This would have to
     // be timed by the server telling the client that the rdma_write has been completed.
-    int ne;
-    struct ibv_wc wc;
+    // int ne;
+    // struct ibv_wc wc;
 
-    do {
-        ne = ibv_poll_cq(ctx->scq[id],1,&wc);
-    } while(ne == 0);
+    // do {
+    //     ne = ibv_poll_cq(ctx->scq[id],1,&wc);
+    // } while(ne == 0);
 
-    if (ne < 0) {
-        fprintf(stderr, "%s: poll CQ failed %d\n",
-            __func__, ne);
-    }
+    // if (ne < 0) {
+    //     fprintf(stderr, "%s: poll CQ failed %d\n",
+    //         __func__, ne);
+    // }
 
-    if (wc.status != IBV_WC_SUCCESS) {
-            fprintf(stderr, "%d:%s: Completion with error at %s:\n",
-                pid, __func__, data->servername ? "client" : "server");
-            fprintf(stderr, "%d:%s: Failed status %d: wr_id %d\n",
-                pid, __func__, wc.status, (int) wc.wr_id);
-        }
+    // if (wc.status != IBV_WC_SUCCESS) {
+    //         fprintf(stderr, "%d:%s: Completion with error at %s:\n",
+    //             pid, __func__, data->servername ? "client" : "server");
+    //         fprintf(stderr, "%d:%s: Failed status %d: wr_id %d\n",
+    //             pid, __func__, wc.status, (int) wc.wr_id);
+    //     }
 
-    if (wc.status == IBV_WC_SUCCESS) {
-        printf("wrid: %i successfull\n",(int)wc.wr_id);
-        printf("%i bytes transfered\n",(int)wc.byte_len);
-    }
+    // if (wc.status == IBV_WC_SUCCESS) {
+    //     printf("wrid: %i successfull\n",(int)wc.wr_id);
+    //     printf("%i bytes transfered\n",(int)wc.byte_len);
+    // }
 
 }    
 
@@ -725,7 +720,7 @@ static void rdma_read(struct app_context *ctx, struct app_data *data, int id){
     struct ibv_wc wc;
 
     do {
-        ne = ibv_poll_cq(ctx->scq[id],1,&wc);
+        ne = ibv_poll_cq(ctx->cq,1,&wc);
     } while(ne == 0);
 
     if (ne < 0) {
