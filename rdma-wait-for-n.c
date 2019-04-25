@@ -118,6 +118,8 @@ static int qp_change_state_rts(struct ibv_qp *qp, struct app_data *data, int id)
 static void rdma_write(struct app_context *ctx, struct app_data *data, int id);
 static void rdma_read(struct app_context *ctx, struct app_data *data, int id);
 static int permission_switch(struct ibv_mr* old_mr, struct ibv_mr* new_mr, struct ibv_pd* pd, void* addr, size_t length, int old_new_flags, int new_new_flags);
+static int wait_for_n(int n, uint64_t round_nb, struct ibv_cq *cq, int num_entries, struct ibv_wc *wc_array);
+static int handle_work_completion( struct ibv_wc *wc );
 
 int main(int argc, char *argv[])
 {
@@ -183,15 +185,15 @@ int main(int argc, char *argv[])
     }
 
     if(data.servername){ // I am a client
-        qp_change_state_rts(ctx->qp[0], &data, 0);
+        qp_change_state_rtr(ctx->qp[0], &data, 0);
     } else { // I am the server
         for (int i = 0; i < num_clients; ++i) {
-            qp_change_state_rtr(ctx->qp[i], &data, i);
+            qp_change_state_rts(ctx->qp[i], &data, i);
         }
     }    
 
-    if(data.servername){
-        /* Client - RDMA WRITE */
+    if(!data.servername){
+        /* Server - RDMA WRITE */
 
         printf("Press ENTER to continue\n");
         getchar();
@@ -199,8 +201,9 @@ int main(int argc, char *argv[])
         char *chPtr = ctx->buf;
         strcpy(chPtr,"Saluton Teewurst. UiUi");
 
-        printf("Client. Writing to Server\n");
+        // printf("Client. Writing to Server\n");
         rdma_write(ctx, &data, 0);
+        rdma_write(ctx, &data, 1);
         
         // printf("Server. Done with write. Reading from client\n");
 
@@ -208,14 +211,15 @@ int main(int argc, char *argv[])
         // rdma_read(ctx, &data, 0);
         // printf("Printing local buffer: %s\n" ,chPtr);
         
-    } else {
+    } else { // Client
 
-        permission_switch(ctx->mr[1], ctx->mr[0], ctx->pd, ctx->buf, ctx->size*2, IBV_ACCESS_LOCAL_WRITE, IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE);
-        permission_switch(ctx->mr[0], ctx->mr[1], ctx->pd, ctx->buf, ctx->size*2, IBV_ACCESS_LOCAL_WRITE, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
+        // permission_switch(ctx->mr[1], ctx->mr[0], ctx->pd, ctx->buf, ctx->size*2, IBV_ACCESS_LOCAL_WRITE, IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE);
+        // permission_switch(ctx->mr[0], ctx->mr[1], ctx->pd, ctx->buf, ctx->size*2, IBV_ACCESS_LOCAL_WRITE, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
         // ibv_rereg_mr(ctx->mr[0], IBV_REREG_MR_CHANGE_ACCESS, ctx->pd, ctx->buf, ctx->size * 2, IBV_ACCESS_LOCAL_WRITE);
         // ibv_rereg_mr(ctx->mr[1], IBV_REREG_MR_CHANGE_ACCESS, ctx->pd, ctx->buf, ctx->size * 2, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
+       
         /* Server - Read local buffer */
-        printf("Server. Reading Local-Buffer (Buffer that was registered with MR)\n");
+        printf("Client. Reading Local-Buffer (Buffer that was registered with MR)\n");
         
         char *chPtr = (char *)data.local_connection[0].vaddr;
             
@@ -227,10 +231,8 @@ int main(int argc, char *argv[])
 
         printf("Printing local buffer: %s\n" ,chPtr);
         
-        // // write a new value for the server to read
-        // strcpy(chPtr,"Saluton Beewurst. UiUi");
-        sleep(5);
-        
+        printf("Press ENTER to continue\n");
+        getchar();
     }
     
     printf("Destroying IB context\n");
@@ -779,6 +781,7 @@ static int wait_for_n(int n, uint64_t round_nb, struct ibv_cq *cq, int num_entri
     int ne = 0;
     int i;
     int ret;
+    uint64_t wr_id;
 
     while (success_count < n) {
         // poll
@@ -790,7 +793,7 @@ static int wait_for_n(int n, uint64_t round_nb, struct ibv_cq *cq, int num_entri
             wr_id = wc_array[i].wr_id;
             // split wr_id into relevant fields
 
-            ret = handle_work_completion(wc_array[i]);
+            ret = handle_work_completion(&wc_array[i]);
             if (ret == WC_SUCCESS) {
                 if (WRID_GET_SSN(wr_id) == round_nb) {
                     success_count++;
