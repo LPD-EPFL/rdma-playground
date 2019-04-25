@@ -113,6 +113,7 @@ static int tcp_exch_ib_connection_info(struct app_data *data);
 static int qp_change_state_init(struct ibv_qp *qp, struct app_data *data);
 static int qp_change_state_rtr(struct ibv_qp *qp, struct app_data *data, int id);
 static int qp_change_state_rts(struct ibv_qp *qp, struct app_data *data, int id);
+static void rc_qp_destroy( struct ibv_qp *qp, struct ibv_cq *cq );
 
 static void rdma_write(struct app_context *ctx, struct app_data *data, int id);
 static void rdma_read(struct app_context *ctx, struct app_data *data, int id);
@@ -201,12 +202,13 @@ int main(int argc, char *argv[])
         strcpy(chPtr,"Saluton Teewurst. UiUi");
 
         // printf("Client. Writing to Server\n");
-        rdma_write(ctx, &data, 0);
-        rdma_write(ctx, &data, 1);
+        for (int i = 0; i < num_clients; ++i) {
+            rdma_write(ctx, &data, i);
+        }
 
         struct ibv_wc wc;
         //int n, uint64_t round_nb, struct ibv_cq *cq, int num_entries, struct ibv_wc *wc_array);
-        wait_for_n(2, 42, ctx->cq, 1, &wc);
+        wait_for_n(num_clients, 42, ctx->cq, 1, &wc);
         
         // printf("Server. Done with write. Reading from client\n");
 
@@ -410,8 +412,7 @@ static struct app_context *init_ctx(struct app_data *data)
 static void destroy_ctx(struct app_context *ctx){
         
     for (int i = 0; i < num_clients; i++) {
-        TEST_NZ(ibv_destroy_qp(ctx->qp[i]),
-            "Could not destroy queue pair, ibv_destroy_qp");
+        rc_qp_destroy( ctx->qp[i], ctx->cq );
     }
         
     TEST_NZ(ibv_destroy_cq(ctx->cq),
@@ -607,6 +608,30 @@ static int qp_change_state_rts(struct ibv_qp *qp, struct app_data *data, int id)
     free(attr);
 
     return 0;
+}
+
+static void 
+rc_qp_destroy( struct ibv_qp *qp, struct ibv_cq *cq )
+{
+    struct ibv_qp_attr attr;
+    struct ibv_qp_init_attr init_attr;
+    struct ibv_wc wc;
+
+    if (NULL == qp) return;
+       
+    ibv_query_qp(qp, &attr, IBV_QP_STATE, &init_attr);
+    if (attr.qp_state != IBV_QPS_RESET) {
+        /* Move QP into the ERR state to cancel all outstanding WR */
+        memset(&attr, 0, sizeof(attr));
+        attr.qp_state = IBV_QPS_ERR;
+        TEST_NZ(ibv_modify_qp(qp, &attr, IBV_QP_STATE), "could not move qp to error state");
+
+        /* Empty the corresponding CQ */
+        while (ibv_poll_cq(cq, 1, &wc) > 0);// info(log_fp, "while...\n");
+    }
+   
+    TEST_NZ(ibv_destroy_qp(qp), "could not destroy qp");
+    
 }
 
 /*
