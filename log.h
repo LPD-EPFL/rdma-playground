@@ -11,7 +11,7 @@ struct log {
     uint64_t minProposal;
     uint64_t firstUndecidedIndex;
     uint64_t len;
-    uint8_t slots[0];
+    log_slot_t slots[0];
 };
 typedef struct log log_t;
 
@@ -19,15 +19,15 @@ typedef struct log log_t;
 
 
 // Allocates and initializes a log
-// len = the size in bytes to allocated for log slots
+// len = the number of log slots to allocate
 static log_t* 
 log_new(size_t len) {
-    log_t *log = (log_t*) malloc(sizeof(dare_log_t) + len);
+    log_t *log = (log_t*) malloc(sizeof(log_t) + len * sizeof(log_slot_t));
     if (NULL == log) {
         return NULL;
     }
 
-    memset(log, 0, sizeof(dare_log_t) + len);
+    memset(log, 0, sizeof(log_t) + len * sizeof(log_slot_t));
     log->len = len;
 
     return log;
@@ -50,10 +50,10 @@ log_free( log_t* log )
 // Return value: a pointer to the specified slot, or NULL of index is too large
 static log_slot_t*
 get_slot(log_t log, size_t index) {
-    if (index * sizeof(log_slot_t) >= log->len) {
+    if (index >= log->len) {
         return NULL;
     }
-    return (log_t*)(log->slots + index);
+    return log->slots[index];
 }
 
 #endif

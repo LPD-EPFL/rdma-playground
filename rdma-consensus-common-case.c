@@ -69,11 +69,11 @@ struct app_context{
     struct ibv_cq               *cq;
     struct ibv_qp               **qp;
     struct ibv_comp_channel     *ch;
-    void                        *buf;
-    unsigned                    size;
+    void                        *buf; // local memory to use with RDMA; will get rid of later, here just for testing
+    unsigned                    size; // size of local buffer above
     int                         tx_depth;
-    struct ibv_sge              sge_list;
-    struct ibv_send_wr          wr;
+    struct ibv_sge              sge_list; // will get rid of later, here just for testing
+    struct ibv_send_wr          wr; // will get rid of later, here just for testing
 };
 
 struct ib_connection {
@@ -96,6 +96,21 @@ struct app_data {
     struct ibv_device           *ib_dev;
 
 };
+
+struct app_context *ctx = NULL;
+
+struct app_data          data = {
+    .port                = 18515,
+    .ib_port            = 1,
+    .size               = 65536,
+    .tx_depth           = 100,
+    .servername         = NULL,
+    .remote_connection  = NULL,
+    .local_connection   = NULL,
+    .ib_dev             = NULL
+    
+};
+
 
 static int die(const char *reason);
 
@@ -120,22 +135,10 @@ static void rdma_read(struct app_context *ctx, struct app_data *data, int id);
 static int permission_switch(struct ibv_mr* old_mr, struct ibv_mr* new_mr, struct ibv_pd* pd, void* addr, size_t length, int old_new_flags, int new_new_flags);
 static int wait_for_n(int n, uint64_t round_nb, struct ibv_cq *cq, int num_entries, struct ibv_wc *wc_array);
 static int handle_work_completion( struct ibv_wc *wc );
+static int post_send(struct ibv_qp *qp, void* buf, uint32_t len, uint32_t lkey, uint32_t rkey, uint64_t remote_addr, enum ibv_wr_opcode opcode, uint64_t round_nb);
 
 int main(int argc, char *argv[])
 {
-    struct app_context         *ctx = NULL;
-
-    struct app_data          data = {
-        .port                = 18515,
-        .ib_port            = 1,
-        .size               = 65536,
-        .tx_depth           = 100,
-        .servername         = NULL,
-        .remote_connection  = NULL,
-        .local_connection   = NULL,
-        .ib_dev             = NULL
-        
-    };
 
     if(argc == 2){
         num_clients = atoi(argv[1]);
@@ -640,63 +643,8 @@ rc_qp_destroy( struct ibv_qp *qp, struct ibv_cq *cq )
  *    Writes 'ctx-buf' into buffer of peer
  */
 static void rdma_write(struct app_context *ctx, struct app_data *data, int id){
-    
-    ctx->sge_list.addr      = (uintptr_t)ctx->buf;
-    ctx->sge_list.length    = ctx->size;
-    ctx->sge_list.lkey      = ctx->mr[id]->lkey;
 
-    ctx->wr.wr.rdma.remote_addr = data->remote_connection[id].vaddr;
-    ctx->wr.wr.rdma.rkey        = data->remote_connection[id].rkey;
-    WRID_SET_SSN(ctx->wr.wr_id, 42);
-    ctx->wr.sg_list     = &ctx->sge_list;
-    ctx->wr.num_sge     = 1;
-    ctx->wr.opcode      = IBV_WR_RDMA_WRITE;
-    ctx->wr.send_flags  = IBV_SEND_SIGNALED;
-    ctx->wr.next        = NULL;
-
-    struct ibv_send_wr *bad_wr;
-
-    int rc = ibv_post_send(ctx->qp[id],&ctx->wr,&bad_wr);
-
-    switch (rc) {
-        case EINVAL: 
-            printf("EINVAL\n");
-            break;
-        case ENOMEM:
-            printf("ENOMEM\n");
-            break;
-        case EFAULT:
-            printf("EFAULT\n");
-            break;
-        default:
-            break;
-    }
-
-    // Conrols if message was competely sent. But fails if client destroys his context to early. This would have to
-    // be timed by the server telling the client that the rdma_write has been completed.
-    // int ne;
-    // struct ibv_wc wc;
-
-    // do {
-    //     ne = ibv_poll_cq(ctx->scq[id],1,&wc);
-    // } while(ne == 0);
-
-    // if (ne < 0) {
-    //     fprintf(stderr, "%s: poll CQ failed %d\n",
-    //         __func__, ne);
-    // }
-
-    // if (wc.status != IBV_WC_SUCCESS) {
-    //         fprintf(stderr, "%d:%s: Completion with error at %s:\n",
-    //             pid, __func__, data->servername ? "client" : "server");
-    //         fprintf(stderr, "%d:%s: Failed status %d: wr_id %d\n",
-    //             pid, __func__, wc.status, (int) wc.wr_id);
-    //     }
-
-    // if (wc.status == IBV_WC_SUCCESS) {
-    //     printf("wrid: %i successfull\n",(int)wc.wr_id);
-    //     printf("%i bytes transfered\n",(int)wc.byte_len);
-    // }
+    post_send(ctx->qp[id], ctx->buf, ctx->size, ctx->mr[id]->lkey, data->remote_connection[id].rkey, data->remote_connection[id].vaddr, IBV_WR_RDMA_WRITE, 42);
 
 }    
 
@@ -909,49 +857,107 @@ handle_work_completion( struct ibv_wc *wc )
     return rc;
 }
 
-static void
-outer_loop(log_t *log) {
-    uint64_t propNr;
-    while (true) {
-        // wait until I am leader
-        // get permissions
-        // bring followers up to date with me
-        propNr = 1; // choose number higher than any proposal number seen before
-        inner_loop(log);
-    }
-}
+// static void
+// outer_loop(log_t *log) {
+//     uint64_t propNr;
+//     while (true) {
+//         // wait until I am leader
+//         // get permissions
+//         // bring followers up to date with me
+//         propNr = 1; // choose number higher than any proposal number seen before
+//         inner_loop(log);
+//     }
+// }
 
-static void
-inner_loop(log_t *log) {
-    uint64_t index;
-    uint64_t v;
+// static void
+// inner_loop(log_t *log) {
+//     uint64_t index;
+//     uint64_t v;
 
-    bool needPreparePhase = true;
+//     bool needPreparePhase = true;
 
-    while (true) {
-        index = log->firstUndecidedIndex;
-        if (needPreparePhase) {
-            // write propNr into minProposal at a majority of logs // if fails, goto outerLoop
-            // read slot at position "index" from a majority of logs // if fails, abort
-            if (none of the slots read have an accepted value) {
-                needPreparePhase = false;
-                v = myValue;
-            } else {
-                v = value with highest accepted proposal among those read
-            }
-        }
-        // write v, propNr into slot at position "index" at a majority of logs // if fails, goto outerLoop
-        log->firstUndecidedIndex += 1    
-    }
-}
+//     while (true) {
+//         index = log->firstUndecidedIndex;
+//         if (needPreparePhase) {
+//             // write propNr into minProposal at a majority of logs // if fails, goto outerLoop
+//             // read slot at position "index" from a majority of logs // if fails, abort
+//             if (none of the slots read have an accepted value) {
+//                 needPreparePhase = false;
+//                 v = myValue;
+//             } else {
+//                 v = value with highest accepted proposal among those read
+//             }
+//         }
+//         // write v, propNr into slot at position "index" at a majority of logs // if fails, goto outerLoop
+//         log->firstUndecidedIndex += 1    
+//     }
+// }
 
-static ???
+static int
 write_log_slot(log_t* log, size_t index) {
     log_slot_t* slot = get_slot(log, index);
 
     slot->accValue = v;
     slot->accProposal = propNr;
 
-    
+    // post sends to everyone
+    rdma_write_to_all(slot);
+
+    // wait_for_majority
+    wait_for_n();
+}
+
+static void
+rdma_write_to_all(log_slot_t* slot) {
+    for (int i = 0; i < num_clients; ++i) {
+        post_send(ctx->qp[i], slot, sizeof(log_slot_t), ctx->mr[i]->lkey, data->remote_connection[i].rkey, data->remote_connection[i].vaddr, IBV_WR_RDMA_WRITE, 42);
+    }
+}
+
+static int
+post_send(  struct ibv_qp* qp,
+            void* buf,
+            uint32_t len,
+            uint32_t lkey,
+            uint32_t rkey,
+            uint64_t remote_addr,
+            enum ibv_wr_opcode opcode,
+            uint64_t round_nb   ) {
+
+    struct ibv_sge sg;
+    struct ibv_send_wr wr;
+    struct ibv_send_wr *bad_wr;
+
+    memset(&sg, 0, sizeof(sg));
+    sg.addr   = (uint64_t)buf;
+    sg.length = len;
+    sg.lkey   = lkey;    
+
+    memset(&wr, 0, sizeof(wr));
+    WRID_SET_SSN(wr.wr_id, round_nb);
+    wr.sg_list    = &sg;
+    wr.num_sge    = 1;
+    wr.opcode     = IBV_WR_RDMA_WRITE;
+    wr.send_flags = IBV_SEND_SIGNALED;
+    wr.wr.rdma.remote_addr = remote_addr;
+    wr.wr.rdma.rkey = rkey;
+
+    int rc = ibv_post_send(qp, &wr, &bad_wr);
+
+    switch (rc) {
+        case EINVAL: 
+            printf("EINVAL\n");
+            break;
+        case ENOMEM:
+            printf("ENOMEM\n");
+            break;
+        case EFAULT:
+            printf("EFAULT\n");
+            break;
+        default:
+            break;
+    }
+
+    return rc;
 
 }
