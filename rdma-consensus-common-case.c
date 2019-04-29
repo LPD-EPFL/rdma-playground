@@ -62,6 +62,22 @@ static int sl = 1;
 static pid_t pid;
 static int num_clients;
 
+struct ib_connection {
+    int                 lid;
+    int                 qpn;
+    int                 psn;
+    unsigned            rkey;
+    unsigned long long  vaddr;
+};
+
+struct qp_data {
+    struct ibv_qp               *qp;
+    struct ibv_mr               *mr;
+    struct ib_connection        local_connection;
+    struct ib_connection        remote_connection;
+    char                        *servername;
+}
+
 struct app_context{
     struct ibv_context          *context;
     struct ibv_pd               *pd;
@@ -76,13 +92,6 @@ struct app_context{
     struct ibv_send_wr          wr; // will get rid of later, here just for testing
 };
 
-struct ib_connection {
-    int                 lid;
-    int                 qpn;
-    int                 psn;
-    unsigned            rkey;
-    unsigned long long  vaddr;
-};
 
 struct app_data {
     int                         port;
