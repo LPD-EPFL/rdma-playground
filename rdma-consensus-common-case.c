@@ -123,34 +123,6 @@ struct app_context{
 };
 
 
-struct app_data {
-    int                         port;
-    int                         ib_port;
-    unsigned                    size;
-    int                         tx_depth;
-    int                         *sockfd;
-    char                        *servername;
-    struct ib_connection        *local_connection;
-    struct ib_connection        *remote_connection;
-    struct ibv_device           *ib_dev;
-
-};
-
-struct app_context *ctx = NULL;
-
-struct app_data          data = {
-    .port                = 18515,
-    .ib_port            = 1,
-    .size               = 65536,
-    .tx_depth           = 100,
-    .servername         = NULL,
-    .remote_connection  = NULL,
-    .local_connection   = NULL,
-    .ib_dev             = NULL
-    
-};
-
-
 static int die(const char *reason);
 
 static int tcp_client_connect();
@@ -207,7 +179,7 @@ int main(int argc, char *argv[])
     
     init_ctx();
 
-    set_local_ib_connection(ctx);
+    set_local_ib_connection();
     
     g_ctx.sockfd = malloc(num_clients * sizeof(g_ctx.sockfd));
     if(g_ctx.servername) { // I am a client
@@ -282,7 +254,7 @@ int main(int argc, char *argv[])
     }
     
     printf("Destroying IB context\n");
-    destroy_ctx(ctx);
+    destroy_ctx();
     
     printf("Closing socket\n");
     for (int i = 0; i < num_clients; ++i) {
@@ -416,7 +388,7 @@ static void init_ctx()
 
     // g_ctx.qp  = malloc(num_clients * sizeof(struct ibv_qp*));
     // g_ctx.mr  = malloc(num_clients * sizeof(struct ibv_mr*));
-    TEST_Z(g_ctx.cq = ibv_create_cq(g_ctx.context,g_ctx.tx_depth, ctx, g_ctx.ch, 0),
+    TEST_Z(g_ctx.cq = ibv_create_cq(g_ctx.context,g_ctx.tx_depth, NULL, g_ctx.ch, 0),
                 "Could not create completion queue, ibv_create_cq"); 
 
     for (int i = 0; i < num_clients; i++) {
@@ -465,7 +437,6 @@ static void destroy_ctx(){
             "Could not deallocate protection domain, ibv_dealloc_pd");    
     
     free(g_ctx.buf);
-    free(ctx);
     
 }
 
