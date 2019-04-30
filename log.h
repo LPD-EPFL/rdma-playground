@@ -44,16 +44,22 @@ log_free( log_t* log )
     }
 }
 
+// Returns the size of a log in bytes
+static size_t
+log_size( log_t* log) {
+    return (sizeof(log_t) + log->len * sizeof(log_slot_t));
+}
+
 // Returns a pointer to a slot at a specified index in a log
 // log = the log
 // index = the index of the slot to retrieve
 // Return value: a pointer to the specified slot, or NULL of index is too large
 static log_slot_t*
-get_slot(log_t log, size_t index) {
+get_slot(log_t* log, size_t index) {
     if (index >= log->len) {
         return NULL;
     }
-    return log->slots[index];
+    return &log->slots[index];
 }
 
 #endif

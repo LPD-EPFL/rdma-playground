@@ -17,6 +17,7 @@
 #include <netdb.h>
 
 #include <infiniband/verbs.h>
+#include "log.h"
 
 #define RDMA_WRID 3
 
@@ -60,7 +61,6 @@
 static int page_size;
 static int sl = 1;
 static pid_t pid;
-static int num_clients;
 
 struct ib_connection {
     int                 lid;
@@ -85,13 +85,15 @@ struct global_context {
     struct ibv_cq               *cq;
     struct ibv_comp_channel     *ch;
     struct qp_context           *qps;
+    uint64_t                    round_nb;
+    int                         num_clients;
     int                         port;
     int                         ib_port;
     int                         tx_depth;
     int                         *sockfd;
     char                        *servername;
-    void                        *buf; // local memory to use with RDMA; will get rid of later, here just for testing
-    unsigned                    size; // size of local buffer above
+    log_t                       *log; 
+    size_t                      len; 
 };
 
 struct global_context g_ctx = {
@@ -101,27 +103,15 @@ struct global_context g_ctx = {
     .cq                 = NULL,
     .ch                 = NULL,
     .qps                = NULL,
+    .round_nb           = 0,
+    .num_clients        = 0,
     .port               = 18515,
     .ib_port            = 1,
-    .size               = 65536,
     .tx_depth           = 100,
     .servername         = NULL,
+    .log                = NULL,
+    .len                = 15,
 };
-
-struct app_context{
-    struct ibv_context          *context;
-    struct ibv_pd               *pd;
-    struct ibv_mr               **mr;
-    struct ibv_cq               *cq;
-    struct ibv_qp               **qp;
-    struct ibv_comp_channel     *ch;
-    void                        *buf; // local memory to use with RDMA; will get rid of later, here just for testing
-    unsigned                    size; // size of local buffer above
-    int                         tx_depth;
-    struct ibv_sge              sge_list; // will get rid of later, here just for testing
-    struct ibv_send_wr          wr; // will get rid of later, here just for testing
-};
-
 
 static int die(const char *reason);
 
@@ -152,13 +142,13 @@ int main(int argc, char *argv[])
 {
 
     if(argc == 2){
-        num_clients = atoi(argv[1]);
-        if (num_clients == 0) {
-            num_clients = 1;
+        g_ctx.num_clients = atoi(argv[1]);
+        if (g_ctx.num_clients == 0) {
+            g_ctx.num_clients = 1;
             g_ctx.servername = argv[1];
             printf("I am a client. The server is %s\n", g_ctx.servername);
         } else {
-            printf("I am a server. I expect %d clients\n", num_clients);
+            printf("I am a server. I expect %d clients\n", g_ctx.num_clients);
         }
     } else { // (argc != 2)
         die("*Error* Usage: rdma <server/nb_clients>\n");
@@ -169,7 +159,7 @@ int main(int argc, char *argv[])
     if(!g_ctx.servername){
         // Print app parameters. This is basically from rdma_bw app. Most of them are not used atm
         printf("PID=%d | port=%d | ib_port=%d | size=%d | tx_depth=%d | sl=%d |\n",
-            pid, g_ctx.port, g_ctx.ib_port, g_ctx.size, g_ctx.tx_depth, sl);
+            pid, g_ctx.port, g_ctx.ib_port, g_ctx.len, g_ctx.tx_depth, sl);
     }
 
     // Is later needed to create random number for psn
@@ -181,7 +171,7 @@ int main(int argc, char *argv[])
 
     set_local_ib_connection();
     
-    g_ctx.sockfd = malloc(num_clients * sizeof(g_ctx.sockfd));
+    g_ctx.sockfd = malloc(g_ctx.num_clients * sizeof(g_ctx.sockfd));
     if(g_ctx.servername) { // I am a client
         g_ctx.sockfd[0] = tcp_client_connect();
     } else { // I am the server
@@ -192,7 +182,7 @@ int main(int argc, char *argv[])
             "Could not exchange connection, tcp_exch_ib_connection");
 
     // Print IB-connection details
-    for (int i = 0; i < num_clients; ++i) {
+    for (int i = 0; i < g_ctx.num_clients; ++i) {
         print_ib_connection("Local  Connection", &g_ctx.qps[i].local_connection);
         print_ib_connection("Remote Connection", &g_ctx.qps[i].remote_connection);    
     }
@@ -200,7 +190,7 @@ int main(int argc, char *argv[])
     if(g_ctx.servername){ // I am a client
         qp_change_state_rtr(g_ctx.qps[0].qp, 0);
     } else { // I am the server
-        for (int i = 0; i < num_clients; ++i) {
+        for (int i = 0; i < g_ctx.num_clients; ++i) {
             qp_change_state_rts(g_ctx.qps[i].qp, i);
         }
     }    
@@ -210,18 +200,25 @@ int main(int argc, char *argv[])
 
         printf("Press ENTER to continue\n");
         getchar();
+
+        // log_t* log = log_new(15);
+        // outerLoop(log);
+
+        // printf("Press ENTER to continue\n");
+        // getchar();
+        
         // For now, the message to be written into the clients buffer can be edited here
-        char *chPtr = g_ctx.buf;
+        char *chPtr = g_ctx.log;
         strcpy(chPtr,"Saluton Teewurst. UiUi");
 
         // printf("Client. Writing to Server\n");
-        for (int i = 0; i < num_clients; ++i) {
+        for (int i = 0; i < g_ctx.num_clients; ++i) {
             rdma_write(i);
         }
 
         struct ibv_wc wc;
         //int n, uint64_t round_nb, struct ibv_cq *cq, int num_entries, struct ibv_wc *wc_array);
-        wait_for_n(num_clients, 42, g_ctx.cq, 1, &wc);
+        wait_for_n(g_ctx.num_clients, 42, g_ctx.cq, 1, &wc);
         
         // printf("Server. Done with write. Reading from client\n");
 
@@ -236,7 +233,24 @@ int main(int argc, char *argv[])
         // ibv_rereg_mr(g_ctx.mr[0], IBV_REREG_MR_CHANGE_ACCESS, g_ctx.pd, g_ctx.buf, g_ctx.size * 2, IBV_ACCESS_LOCAL_WRITE);
         // ibv_rereg_mr(g_ctx.mr[1], IBV_REREG_MR_CHANGE_ACCESS, g_ctx.pd, g_ctx.buf, g_ctx.size * 2, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
        
-        /* Server - Read local buffer */
+
+        // time_t start, end;
+        // double elapsed;  // seconds
+        // start = time(NULL);
+        // int terminate = 0;
+        // while (!terminate) {
+        //     end = time(NULL);
+        //     elapsed = difftime(end, start);
+        //     if (elapsed >= 5.0 /* seconds */) {
+        //         terminate = 1;
+        //     }
+        //     else {
+        //         log_print(log);
+        //         usleep(100000);
+        //     } 
+        // }
+        // printf("done..\n");
+
         printf("Client. Reading Local-Buffer (Buffer that was registered with MR)\n");
         
         char *chPtr = (char *)g_ctx.qps[0].local_connection.vaddr;
@@ -257,7 +271,7 @@ int main(int argc, char *argv[])
     destroy_ctx();
     
     printf("Closing socket\n");
-    for (int i = 0; i < num_clients; ++i) {
+    for (int i = 0; i < g_ctx.num_clients; ++i) {
         close(g_ctx.sockfd[i]);
     }    
     return 0;
@@ -337,7 +351,7 @@ static void tcp_server_listen() {
     
     listen(sockfd, 1);
 
-    for (int i = 0; i < num_clients; ++i) {
+    for (int i = 0; i < g_ctx.num_clients; ++i) {
         TEST_N(g_ctx.sockfd[i] = accept(sockfd, NULL, 0),
             "server accept failed");
     }
@@ -355,10 +369,12 @@ static void tcp_server_listen() {
 static void init_ctx()
 {
     
-    TEST_NZ(posix_memalign(&g_ctx.buf, page_size, g_ctx.size * 2),
-                "could not allocate working buffer g_ctx.buf");
+    // TEST_NZ(posix_memalign(&g_ctx.buf, page_size, g_ctx.size * 2),
+                // "could not allocate working buffer g_ctx.buf");
 
-    memset(g_ctx.buf, 0, g_ctx.size * 2);
+    // memset(g_ctx.buf, 0, g_ctx.size * 2);
+
+    g_ctx.log = log_new(g_ctx.len);
 
     struct ibv_device **dev_list;
 
@@ -383,16 +399,16 @@ static void init_ctx()
     TEST_Z(g_ctx.ch = ibv_create_comp_channel(g_ctx.context),
             "Could not create completion channel, ibv_create_comp_channel");
 
-    g_ctx.qps = malloc(num_clients * sizeof(struct qp_context));
-    memset(g_ctx.qps, 0, num_clients * sizeof(struct qp_context));
+    g_ctx.qps = malloc(g_ctx.num_clients * sizeof(struct qp_context));
+    memset(g_ctx.qps, 0, g_ctx.num_clients * sizeof(struct qp_context));
 
-    // g_ctx.qp  = malloc(num_clients * sizeof(struct ibv_qp*));
-    // g_ctx.mr  = malloc(num_clients * sizeof(struct ibv_mr*));
-    TEST_Z(g_ctx.cq = ibv_create_cq(g_ctx.context,g_ctx.tx_depth, NULL, g_ctx.ch, 0),
+    // g_ctx.qp  = malloc(g_ctx.num_clients * sizeof(struct ibv_qp*));
+    // g_ctx.mr  = malloc(g_ctx.num_clients * sizeof(struct ibv_mr*));
+    TEST_Z(g_ctx.cq = ibv_create_cq(g_ctx.context,g_ctx.tx_depth, NULL,  g_ctx.ch, 0),
                 "Could not create completion queue, ibv_create_cq"); 
 
-    for (int i = 0; i < num_clients; i++) {
-        TEST_Z(g_ctx.qps[i].mr = ibv_reg_mr(g_ctx.pd, g_ctx.buf, g_ctx.size * 2, 
+    for (int i = 0; i < g_ctx.num_clients; i++) {
+        TEST_Z(g_ctx.qps[i].mr = ibv_reg_mr(g_ctx.pd, (void*)g_ctx.log, log_size(g_ctx.log), 
                         IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE),
                     "Could not allocate mr, ibv_reg_mr. Do you have root access?");
 
@@ -418,7 +434,7 @@ static void init_ctx()
 
 static void destroy_ctx(){
         
-    for (int i = 0; i < num_clients; i++) {
+    for (int i = 0; i < g_ctx.num_clients; i++) {
         rc_qp_destroy( g_ctx.qps[i].qp, g_ctx.cq );
     }
         
@@ -428,7 +444,7 @@ static void destroy_ctx(){
     TEST_NZ(ibv_destroy_comp_channel(g_ctx.ch),
         "Could not destory completion channel, ibv_destroy_comp_channel");
 
-    for (int i = 0; i < num_clients; ++i) {
+    for (int i = 0; i < g_ctx.num_clients; ++i) {
         TEST_NZ(ibv_dereg_mr(g_ctx.qps[i].mr),
                 "Could not de-register memory region, ibv_dereg_mr");
     }
@@ -436,7 +452,7 @@ static void destroy_ctx(){
     TEST_NZ(ibv_dealloc_pd(g_ctx.pd),
             "Could not deallocate protection domain, ibv_dealloc_pd");    
     
-    free(g_ctx.buf);
+    log_free(g_ctx.log);
     
 }
 
@@ -458,12 +474,12 @@ static void set_local_ib_connection(){
     TEST_NZ(ibv_query_port(g_ctx.context,g_ctx.ib_port,&attr),
         "Could not get port attributes, ibv_query_port");
 
-    for (int i = 0; i < num_clients; ++i) {
+    for (int i = 0; i < g_ctx.num_clients; ++i) {
         g_ctx.qps[i].local_connection.qpn = g_ctx.qps[i].qp->qp_num;
         g_ctx.qps[i].local_connection.rkey = g_ctx.qps[i].mr->rkey;
         g_ctx.qps[i].local_connection.lid = attr.lid;
         g_ctx.qps[i].local_connection.psn = lrand48() & 0xffffff;
-        g_ctx.qps[i].local_connection.vaddr = (uintptr_t)g_ctx.buf + g_ctx.size;
+        g_ctx.qps[i].local_connection.vaddr = (uintptr_t)g_ctx.log;
     }
 
 }
@@ -482,7 +498,7 @@ static int tcp_exch_ib_connection_info(){
 
     struct ib_connection *local;
     
-    for (int i = 0; i < num_clients; ++i) {
+    for (int i = 0; i < g_ctx.num_clients; ++i) {
         local = &g_ctx.qps[i].local_connection; 
         sprintf(msg, "%04x:%06x:%06x:%08x:%016Lx", 
                 local->lid, local->qpn, local->psn, local->rkey, local->vaddr);
@@ -640,7 +656,7 @@ rc_qp_destroy( struct ibv_qp *qp, struct ibv_cq *cq )
  */
 static void rdma_write(int id){
 
-    post_send(g_ctx.qps[id].qp, g_ctx.buf, g_ctx.size, g_ctx.qps[id].mr->lkey, g_ctx.qps[id].remote_connection.rkey, g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42);
+    post_send(g_ctx.qps[id].qp, g_ctx.log, log_size(g_ctx.log), g_ctx.qps[id].mr->lkey, g_ctx.qps[id].remote_connection.rkey, g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42);
 
 }    
 
@@ -649,11 +665,11 @@ static void rdma_write(int id){
  *  rdma_read
  * **********************
  */
-static void rdma_read(int id){
+// static void rdma_read(int id){
 
-    post_send(g_ctx.qps[id].qp, g_ctx.buf, g_ctx.size, g_ctx.qps[id].mr->lkey, g_ctx.qps[id].remote_connection.rkey, g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_READ, 42);
+//     post_send(g_ctx.qps[id].qp, g_ctx.buf, g_ctx.size, g_ctx.qps[id].mr->lkey, g_ctx.qps[id].remote_connection.rkey, g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_READ, 42);
 
-}
+// }
 
 static int permission_switch(struct ibv_mr* old_mr, struct ibv_mr* new_mr, struct ibv_pd* pd, void* addr, size_t length, int old_new_flags, int new_new_flags) {
 
@@ -805,53 +821,70 @@ handle_work_completion( struct ibv_wc *wc )
 //         // get permissions
 //         // bring followers up to date with me
 //         propNr = 1; // choose number higher than any proposal number seen before
-//         inner_loop(log);
+//         inner_loop(log, propNr);
 //     }
 // }
 
 // static void
-// inner_loop(log_t *log) {
-//     uint64_t index;
+// inner_loop(log_t *log, uint64_t propNr) {
+//     uint64_t index = 0;
 //     uint64_t v;
 
 //     bool needPreparePhase = true;
 
-//     while (true) {
+//     while (index < 10) {
 //         index = log->firstUndecidedIndex;
-//         if (needPreparePhase) {
-//             // write propNr into minProposal at a majority of logs // if fails, goto outerLoop
-//             // read slot at position "index" from a majority of logs // if fails, abort
-//             if (none of the slots read have an accepted value) {
-//                 needPreparePhase = false;
-//                 v = myValue;
-//             } else {
-//                 v = value with highest accepted proposal among those read
-//             }
-//         }
+//         // if (needPreparePhase) {
+//         //     // write propNr into minProposal at a majority of logs // if fails, goto outerLoop
+//         //     // read slot at position "index" from a majority of logs // if fails, abort
+//         //     if (none of the slots read have an accepted value) {
+//         //         needPreparePhase = false;
+//         //         v = myValue;
+//         //     } else {
+//         //         v = value with highest accepted proposal among those read
+//         //     }
+//         // }
 //         // write v, propNr into slot at position "index" at a majority of logs // if fails, goto outerLoop
+//         v = index;
+//         write_log_slot(log, index, v, propNr);
 //         log->firstUndecidedIndex += 1    
 //     }
 // }
 
 // static int
-// write_log_slot(log_t* log, size_t index) {
+// write_log_slot(log_t* log, size_t index, uint64_t propNr, uint64_t value) {
 //     log_slot_t* slot = get_slot(log, index);
 
-//     slot->accValue = v;
+//     slot->accValue = value;
 //     slot->accProposal = propNr;
 
 //     // post sends to everyone
-//     rdma_write_to_all(slot);
+//     rdma_write_to_all(log, index);
 
 //     // wait_for_majority
-//     wait_for_n();
+//     wait_for_majority();
 // }
 
 // static void
-// rdma_write_to_all(log_slot_t* slot) {
-//     for (int i = 0; i < num_clients; ++i) {
-//         post_send(g_ctx.qp[i], slot, sizeof(log_slot_t), g_ctx.mr[i]->lkey, g_ctx.remote_connection[i].rkey, g_ctx.remote_connection[i].vaddr, IBV_WR_RDMA_WRITE, 42);
+// rdma_write_to_all(log_t* log, size_t index) {
+//     log_slot_t* slot = get_slot(log, index);
+//     void* remote_addr = (void*)get_slot(g_ctx.remote_connection[i].vaddr, index);
+//     g_ctx.round_nb++;
+//     for (int i = 0; i < g_ctx.num_clients; ++i) {
+//         post_send(g_ctx.qp[i], slot, sizeof(log_slot_t), g_ctx.mr[i]->lkey, g_ctx.remote_connection[i].rkey, remote_addr, IBV_WR_RDMA_WRITE, g_ctx.round_nb);
 //     }
+// }
+
+// static void
+// wait_for_majority() {
+//     int majority = (g_ctx.num_clients/2) + 1;
+
+//     // array to store the work completions inside wait_for_n
+//     // we might want to place this in the global context later
+//     struct ibv_wc wc_array[g_ctx.num_clients];
+//     // currently we are polling at most num_clients WCs from the CQ at a time
+//     // we might want to change this number later
+//     wait_for_n(majority, g_ctx.round_nb, g_ctx.cq, g_ctx.num_clients, wc_array);
 // }
 
 static int
