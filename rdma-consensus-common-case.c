@@ -70,13 +70,43 @@ struct ib_connection {
     unsigned long long  vaddr;
 };
 
-struct qp_data {
+struct qp_context {
     struct ibv_qp               *qp;
     struct ibv_mr               *mr;
     struct ib_connection        local_connection;
     struct ib_connection        remote_connection;
+    char                        *servername; // Igor: should we store this per-connection?
+};
+
+struct global_context {
+    struct ibv_device           *ib_dev;
+    struct ibv_context          *context;
+    struct ibv_pd               *pd;
+    struct ibv_cq               *cq;
+    struct ibv_comp_channel     *ch;
+    struct qp_context           *qps;
+    int                         port;
+    int                         ib_port;
+    int                         tx_depth;
+    int                         *sockfd;
     char                        *servername;
-}
+    void                        *buf; // local memory to use with RDMA; will get rid of later, here just for testing
+    unsigned                    size; // size of local buffer above
+};
+
+struct global_context g_ctx = {
+    .ib_dev             = NULL,
+    .context            = NULL,
+    .pd                 = NULL,
+    .cq                 = NULL,
+    .ch                 = NULL,
+    .qps                = NULL,
+    .port               = 18515,
+    .ib_port            = 1,
+    .size               = 65536,
+    .tx_depth           = 100,
+    .servername         = NULL,
+};
 
 struct app_context{
     struct ibv_context          *context;
@@ -123,24 +153,24 @@ struct app_data          data = {
 
 static int die(const char *reason);
 
-static int tcp_client_connect(struct app_data *data);
-static void tcp_server_listen(struct app_data *data);
+static int tcp_client_connect();
+static void tcp_server_listen();
 
-static struct app_context *init_ctx(struct app_data *data);
-static void destroy_ctx(struct app_context *ctx);
+static void init_ctx();
+static void destroy_ctx();
 
-static void set_local_ib_connection(struct app_context *ctx, struct app_data *data);
+static void set_local_ib_connection();
 static void print_ib_connection(char *conn_name, struct ib_connection *conn);
 
-static int tcp_exch_ib_connection_info(struct app_data *data);
+static int tcp_exch_ib_connection_info();
 
-static int qp_change_state_init(struct ibv_qp *qp, struct app_data *data);
-static int qp_change_state_rtr(struct ibv_qp *qp, struct app_data *data, int id);
-static int qp_change_state_rts(struct ibv_qp *qp, struct app_data *data, int id);
+static int qp_change_state_init(struct ibv_qp *qp);
+static int qp_change_state_rtr(struct ibv_qp *qp, int id);
+static int qp_change_state_rts(struct ibv_qp *qp, int id);
 static void rc_qp_destroy( struct ibv_qp *qp, struct ibv_cq *cq );
 
-static void rdma_write(struct app_context *ctx, struct app_data *data, int id);
-static void rdma_read(struct app_context *ctx, struct app_data *data, int id);
+static void rdma_write(int id);
+static void rdma_read(int id);
 static int permission_switch(struct ibv_mr* old_mr, struct ibv_mr* new_mr, struct ibv_pd* pd, void* addr, size_t length, int old_new_flags, int new_new_flags);
 static int wait_for_n(int n, uint64_t round_nb, struct ibv_cq *cq, int num_entries, struct ibv_wc *wc_array);
 static int handle_work_completion( struct ibv_wc *wc );
@@ -153,8 +183,8 @@ int main(int argc, char *argv[])
         num_clients = atoi(argv[1]);
         if (num_clients == 0) {
             num_clients = 1;
-            data.servername = argv[1];
-            printf("I am a client. The server is %s\n", data.servername);
+            g_ctx.servername = argv[1];
+            printf("I am a client. The server is %s\n", g_ctx.servername);
         } else {
             printf("I am a server. I expect %d clients\n", num_clients);
         }
@@ -164,10 +194,10 @@ int main(int argc, char *argv[])
 
     pid = getpid();
 
-    if(!data.servername){
+    if(!g_ctx.servername){
         // Print app parameters. This is basically from rdma_bw app. Most of them are not used atm
         printf("PID=%d | port=%d | ib_port=%d | size=%d | tx_depth=%d | sl=%d |\n",
-            pid, data.port, data.ib_port, data.size, data.tx_depth, sl);
+            pid, g_ctx.port, g_ctx.ib_port, g_ctx.size, g_ctx.tx_depth, sl);
     }
 
     // Is later needed to create random number for psn
@@ -175,52 +205,51 @@ int main(int argc, char *argv[])
     
     page_size = sysconf(_SC_PAGESIZE);
     
-    TEST_Z(ctx = init_ctx(&data),
-          "Could not create ctx, init_ctx");
+    init_ctx();
 
-    set_local_ib_connection(ctx, &data);
+    set_local_ib_connection(ctx);
     
-    data.sockfd = malloc(num_clients * sizeof(data.sockfd));
-    if(data.servername) { // I am a client
-        data.sockfd[0] = tcp_client_connect(&data);
+    g_ctx.sockfd = malloc(num_clients * sizeof(g_ctx.sockfd));
+    if(g_ctx.servername) { // I am a client
+        g_ctx.sockfd[0] = tcp_client_connect();
     } else { // I am the server
-        tcp_server_listen(&data);
+        tcp_server_listen();
     }
 
-    TEST_NZ(tcp_exch_ib_connection_info(&data),
+    TEST_NZ(tcp_exch_ib_connection_info(),
             "Could not exchange connection, tcp_exch_ib_connection");
 
     // Print IB-connection details
     for (int i = 0; i < num_clients; ++i) {
-        print_ib_connection("Local  Connection", &data.local_connection[i]);
-        print_ib_connection("Remote Connection", &data.remote_connection[i]);    
+        print_ib_connection("Local  Connection", &g_ctx.qps[i].local_connection);
+        print_ib_connection("Remote Connection", &g_ctx.qps[i].remote_connection);    
     }
 
-    if(data.servername){ // I am a client
-        qp_change_state_rtr(ctx->qp[0], &data, 0);
+    if(g_ctx.servername){ // I am a client
+        qp_change_state_rtr(g_ctx.qps[0].qp, 0);
     } else { // I am the server
         for (int i = 0; i < num_clients; ++i) {
-            qp_change_state_rts(ctx->qp[i], &data, i);
+            qp_change_state_rts(g_ctx.qps[i].qp, i);
         }
     }    
 
-    if(!data.servername){
+    if(!g_ctx.servername){
         /* Server - RDMA WRITE */
 
         printf("Press ENTER to continue\n");
         getchar();
         // For now, the message to be written into the clients buffer can be edited here
-        char *chPtr = ctx->buf;
+        char *chPtr = g_ctx.buf;
         strcpy(chPtr,"Saluton Teewurst. UiUi");
 
         // printf("Client. Writing to Server\n");
         for (int i = 0; i < num_clients; ++i) {
-            rdma_write(ctx, &data, i);
+            rdma_write(i);
         }
 
         struct ibv_wc wc;
         //int n, uint64_t round_nb, struct ibv_cq *cq, int num_entries, struct ibv_wc *wc_array);
-        wait_for_n(num_clients, 42, ctx->cq, 1, &wc);
+        wait_for_n(num_clients, 42, g_ctx.cq, 1, &wc);
         
         // printf("Server. Done with write. Reading from client\n");
 
@@ -230,15 +259,15 @@ int main(int argc, char *argv[])
         
     } else { // Client
 
-        // permission_switch(ctx->mr[1], ctx->mr[0], ctx->pd, ctx->buf, ctx->size*2, IBV_ACCESS_LOCAL_WRITE, IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE);
-        // permission_switch(ctx->mr[0], ctx->mr[1], ctx->pd, ctx->buf, ctx->size*2, IBV_ACCESS_LOCAL_WRITE, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
-        // ibv_rereg_mr(ctx->mr[0], IBV_REREG_MR_CHANGE_ACCESS, ctx->pd, ctx->buf, ctx->size * 2, IBV_ACCESS_LOCAL_WRITE);
-        // ibv_rereg_mr(ctx->mr[1], IBV_REREG_MR_CHANGE_ACCESS, ctx->pd, ctx->buf, ctx->size * 2, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
+        // permission_switch(g_ctx.mr[1], g_ctx.mr[0], g_ctx.pd, g_ctx.buf, g_ctx.size*2, IBV_ACCESS_LOCAL_WRITE, IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE);
+        // permission_switch(g_ctx.mr[0], g_ctx.mr[1], g_ctx.pd, g_ctx.buf, g_ctx.size*2, IBV_ACCESS_LOCAL_WRITE, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
+        // ibv_rereg_mr(g_ctx.mr[0], IBV_REREG_MR_CHANGE_ACCESS, g_ctx.pd, g_ctx.buf, g_ctx.size * 2, IBV_ACCESS_LOCAL_WRITE);
+        // ibv_rereg_mr(g_ctx.mr[1], IBV_REREG_MR_CHANGE_ACCESS, g_ctx.pd, g_ctx.buf, g_ctx.size * 2, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
        
         /* Server - Read local buffer */
         printf("Client. Reading Local-Buffer (Buffer that was registered with MR)\n");
         
-        char *chPtr = (char *)data.local_connection[0].vaddr;
+        char *chPtr = (char *)g_ctx.qps[0].local_connection.vaddr;
             
         while(1){
             if(strlen(chPtr) > 0){
@@ -257,7 +286,7 @@ int main(int argc, char *argv[])
     
     printf("Closing socket\n");
     for (int i = 0; i < num_clients; ++i) {
-        close(data.sockfd[i]);
+        close(g_ctx.sockfd[i]);
     }    
     return 0;
 }
@@ -273,7 +302,7 @@ static int die(const char *reason){
  * ********************
  *    Creates a connection to a TCP server 
  */
-static int tcp_client_connect(struct app_data *data)
+static int tcp_client_connect()
 {
     struct addrinfo *res, *t;
     struct addrinfo hints = {
@@ -284,10 +313,10 @@ static int tcp_client_connect(struct app_data *data)
     char *service;
     int sockfd = -1;
 
-    TEST_N(asprintf(&service, "%d", data->port),
+    TEST_N(asprintf(&service, "%d", g_ctx.port),
             "Error writing port-number to port-string");
 
-    TEST_N(getaddrinfo(data->servername, service, &hints, &res),
+    TEST_N(getaddrinfo(g_ctx.servername, service, &hints, &res),
             "getaddrinfo threw error");
 
     for(t = res; t; t = t->ai_next){
@@ -308,7 +337,7 @@ static int tcp_client_connect(struct app_data *data)
  * *******************
  *  Creates a TCP server socket  which listens for incoming connections 
  */
-static void tcp_server_listen(struct app_data *data) {
+static void tcp_server_listen() {
     struct addrinfo *res;
     struct addrinfo hints = {
         .ai_flags        = AI_PASSIVE,
@@ -320,7 +349,7 @@ static void tcp_server_listen(struct app_data *data) {
     int sockfd = -1;
     int n;
 
-    TEST_N(asprintf(&service, "%d", data->port),
+    TEST_N(asprintf(&service, "%d", g_ctx.port),
             "Error writing port-number to port-string");
 
     TEST_N(n = getaddrinfo(NULL, service, &hints, &res),
@@ -337,7 +366,7 @@ static void tcp_server_listen(struct app_data *data) {
     listen(sockfd, 1);
 
     for (int i = 0; i < num_clients; ++i) {
-        TEST_N(data->sockfd[i] = accept(sockfd, NULL, 0),
+        TEST_N(g_ctx.sockfd[i] = accept(sockfd, NULL, 0),
             "server accept failed");
     }
 
@@ -351,33 +380,26 @@ static void tcp_server_listen(struct app_data *data) {
  *    This method initializes the Infiniband Context
  *     It creates structures for: ProtectionDomain, MemoryRegion, CompletionChannel, Completion Queues, Queue Pair
  */
-static struct app_context *init_ctx(struct app_data *data)
+static void init_ctx()
 {
-    struct app_context *ctx;
-
-    ctx = malloc(sizeof *ctx);
-    memset(ctx, 0, sizeof *ctx);
     
-    ctx->size = data->size;
-    ctx->tx_depth = data->tx_depth;
-    
-    TEST_NZ(posix_memalign(&ctx->buf, page_size, ctx->size * 2),
-                "could not allocate working buffer ctx->buf");
+    TEST_NZ(posix_memalign(&g_ctx.buf, page_size, g_ctx.size * 2),
+                "could not allocate working buffer g_ctx.buf");
 
-    memset(ctx->buf, 0, ctx->size * 2);
+    memset(g_ctx.buf, 0, g_ctx.size * 2);
 
     struct ibv_device **dev_list;
 
     TEST_Z(dev_list = ibv_get_device_list(NULL),
             "No IB-device available. get_device_list returned NULL");
 
-    TEST_Z(data->ib_dev = dev_list[0],
+    TEST_Z(g_ctx.ib_dev = dev_list[0],
             "IB-device could not be assigned. Maybe dev_list array is empty");
 
-    TEST_Z(ctx->context = ibv_open_device(data->ib_dev),
+    TEST_Z(g_ctx.context = ibv_open_device(g_ctx.ib_dev),
             "Could not create context, ibv_open_device");
     
-    TEST_Z(ctx->pd = ibv_alloc_pd(ctx->context),
+    TEST_Z(g_ctx.pd = ibv_alloc_pd(g_ctx.context),
         "Could not allocate protection domain, ibv_alloc_pd");
 
     /* We dont really want IBV_ACCESS_LOCAL_WRITE, but IB spec says:
@@ -386,25 +408,28 @@ static struct app_context *init_ctx(struct app_data *data)
      */
 
     
-    TEST_Z(ctx->ch = ibv_create_comp_channel(ctx->context),
+    TEST_Z(g_ctx.ch = ibv_create_comp_channel(g_ctx.context),
             "Could not create completion channel, ibv_create_comp_channel");
 
-    ctx->qp  = malloc(num_clients * sizeof(struct ibv_qp*));
-    ctx->mr  = malloc(num_clients * sizeof(struct ibv_mr*));
-    TEST_Z(ctx->cq = ibv_create_cq(ctx->context,ctx->tx_depth, ctx, ctx->ch, 0),
+    g_ctx.qps = malloc(num_clients * sizeof(struct qp_context));
+    memset(g_ctx.qps, 0, num_clients * sizeof(struct qp_context));
+
+    // g_ctx.qp  = malloc(num_clients * sizeof(struct ibv_qp*));
+    // g_ctx.mr  = malloc(num_clients * sizeof(struct ibv_mr*));
+    TEST_Z(g_ctx.cq = ibv_create_cq(g_ctx.context,g_ctx.tx_depth, ctx, g_ctx.ch, 0),
                 "Could not create completion queue, ibv_create_cq"); 
 
-    for (int i = num_clients; i >= 0; i--) {
-        TEST_Z(ctx->mr[i] = ibv_reg_mr(ctx->pd, ctx->buf, ctx->size * 2, 
+    for (int i = 0; i < num_clients; i++) {
+        TEST_Z(g_ctx.qps[i].mr = ibv_reg_mr(g_ctx.pd, g_ctx.buf, g_ctx.size * 2, 
                         IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE),
                     "Could not allocate mr, ibv_reg_mr. Do you have root access?");
 
         struct ibv_qp_init_attr qp_init_attr = {
-            .send_cq = ctx->cq,
-            .recv_cq = ctx->cq,
+            .send_cq = g_ctx.cq,
+            .recv_cq = g_ctx.cq,
             .qp_type = IBV_QPT_RC,
             .cap = {
-                .max_send_wr = ctx->tx_depth,
+                .max_send_wr = g_ctx.tx_depth,
                 .max_recv_wr = 1,
                 .max_send_sge = 1,
                 .max_recv_sge = 1,
@@ -412,36 +437,34 @@ static struct app_context *init_ctx(struct app_data *data)
             }
         };
 
-        TEST_Z(ctx->qp[i] = ibv_create_qp(ctx->pd, &qp_init_attr),
+        TEST_Z(g_ctx.qps[i].qp = ibv_create_qp(g_ctx.pd, &qp_init_attr),
                 "Could not create queue pair, ibv_create_qp");    
         
-        qp_change_state_init(ctx->qp[i], data);        
+        qp_change_state_init(g_ctx.qps[i].qp);        
     }
-    
-    return ctx;
 }
 
-static void destroy_ctx(struct app_context *ctx){
+static void destroy_ctx(){
         
     for (int i = 0; i < num_clients; i++) {
-        rc_qp_destroy( ctx->qp[i], ctx->cq );
+        rc_qp_destroy( g_ctx.qps[i].qp, g_ctx.cq );
     }
         
-    TEST_NZ(ibv_destroy_cq(ctx->cq),
+    TEST_NZ(ibv_destroy_cq(g_ctx.cq),
             "Could not destroy completion queue, ibv_destroy_cq");
 
-    TEST_NZ(ibv_destroy_comp_channel(ctx->ch),
+    TEST_NZ(ibv_destroy_comp_channel(g_ctx.ch),
         "Could not destory completion channel, ibv_destroy_comp_channel");
 
     for (int i = 0; i < num_clients; ++i) {
-        TEST_NZ(ibv_dereg_mr(ctx->mr[i]),
+        TEST_NZ(ibv_dereg_mr(g_ctx.qps[i].mr),
                 "Could not de-register memory region, ibv_dereg_mr");
     }
 
-    TEST_NZ(ibv_dealloc_pd(ctx->pd),
+    TEST_NZ(ibv_dealloc_pd(g_ctx.pd),
             "Could not deallocate protection domain, ibv_dealloc_pd");    
     
-    free(ctx->buf);
+    free(g_ctx.buf);
     free(ctx);
     
 }
@@ -457,21 +480,19 @@ static void destroy_ctx(struct app_context *ctx){
  *      rkey - Remote Key, together with 'vaddr' identifies and grants access to memory region
  *      vaddr - Virtual Address, memory address that peer can later write to
  */
-static void set_local_ib_connection(struct app_context *ctx, struct app_data *data){
+static void set_local_ib_connection(){
 
     // First get local lid
     struct ibv_port_attr attr;
-    TEST_NZ(ibv_query_port(ctx->context,data->ib_port,&attr),
+    TEST_NZ(ibv_query_port(g_ctx.context,g_ctx.ib_port,&attr),
         "Could not get port attributes, ibv_query_port");
 
-    data->local_connection = malloc(num_clients * sizeof(struct ib_connection));
-
     for (int i = 0; i < num_clients; ++i) {
-        data->local_connection[i].qpn = ctx->qp[i]->qp_num;
-        data->local_connection[i].rkey = ctx->mr[i]->rkey;
-        data->local_connection[i].lid = attr.lid;
-        data->local_connection[i].psn = lrand48() & 0xffffff;
-        data->local_connection[i].vaddr = (uintptr_t)ctx->buf + ctx->size;
+        g_ctx.qps[i].local_connection.qpn = g_ctx.qps[i].qp->qp_num;
+        g_ctx.qps[i].local_connection.rkey = g_ctx.qps[i].mr->rkey;
+        g_ctx.qps[i].local_connection.lid = attr.lid;
+        g_ctx.qps[i].local_connection.psn = lrand48() & 0xffffff;
+        g_ctx.qps[i].local_connection.vaddr = (uintptr_t)g_ctx.buf + g_ctx.size;
     }
 
 }
@@ -483,37 +504,32 @@ static void print_ib_connection(char *conn_name, struct ib_connection *conn){
 
 }
 
-static int tcp_exch_ib_connection_info(struct app_data *data){
+static int tcp_exch_ib_connection_info(){
 
     char msg[sizeof "0000:000000:000000:00000000:0000000000000000"];
     int parsed;
 
     struct ib_connection *local;
-
-    TEST_Z(data->remote_connection = malloc(num_clients * sizeof(struct ib_connection)),
-        "Could not allocate memory for remote_connection connection");
-    memset(data->remote_connection, 0, num_clients * sizeof(struct ib_connection));
     
     for (int i = 0; i < num_clients; ++i) {
-        local = &data->local_connection[i]; 
+        local = &g_ctx.qps[i].local_connection; 
         sprintf(msg, "%04x:%06x:%06x:%08x:%016Lx", 
                 local->lid, local->qpn, local->psn, local->rkey, local->vaddr);
-        if(write(data->sockfd[i], msg, sizeof msg) != sizeof msg){
+        if(write(g_ctx.sockfd[i], msg, sizeof msg) != sizeof msg){
             perror("Could not send connection_details to peer");
             return -1;
         }    
 
-        if(read(data->sockfd[i], msg, sizeof msg) != sizeof msg){
+        if(read(g_ctx.sockfd[i], msg, sizeof msg) != sizeof msg){
             perror("Could not receive connection_details to peer");
             return -1;
         }
-        struct ib_connection *remote = &data->remote_connection[i];
+        struct ib_connection *remote = &g_ctx.qps[i].remote_connection;
         parsed = sscanf(msg, "%x:%x:%x:%x:%Lx", 
                             &remote->lid, &remote->qpn, &remote->psn, &remote->rkey, &remote->vaddr);
         
         if(parsed != 5){
             fprintf(stderr, "Could not parse message from peer");
-            free(data->remote_connection);
         }
     }
 
@@ -525,7 +541,7 @@ static int tcp_exch_ib_connection_info(struct app_data *data){
  * **********************
  *    Changes Queue Pair status to INIT
  */
-static int qp_change_state_init(struct ibv_qp *qp, struct app_data *data){
+static int qp_change_state_init(struct ibv_qp *qp){
     
     struct ibv_qp_attr *attr;
 
@@ -534,7 +550,7 @@ static int qp_change_state_init(struct ibv_qp *qp, struct app_data *data){
 
     attr->qp_state            = IBV_QPS_INIT;
     attr->pkey_index          = 0;
-    attr->port_num            = data->ib_port;
+    attr->port_num            = g_ctx.ib_port;
     attr->qp_access_flags     = IBV_ACCESS_REMOTE_WRITE;
 
     TEST_NZ(ibv_modify_qp(qp, attr,
@@ -552,7 +568,7 @@ static int qp_change_state_init(struct ibv_qp *qp, struct app_data *data){
  * **********************
  *  Changes Queue Pair status to RTR (Ready to receive)
  */
-static int qp_change_state_rtr(struct ibv_qp *qp, struct app_data *data, int id){
+static int qp_change_state_rtr(struct ibv_qp *qp, int id){
     
     struct ibv_qp_attr *attr;
 
@@ -561,15 +577,15 @@ static int qp_change_state_rtr(struct ibv_qp *qp, struct app_data *data, int id)
 
     attr->qp_state              = IBV_QPS_RTR;
     attr->path_mtu              = IBV_MTU_2048;
-    attr->dest_qp_num           = data->remote_connection[id].qpn;
-    attr->rq_psn                = data->remote_connection[id].psn;
+    attr->dest_qp_num           = g_ctx.qps[id].remote_connection.qpn;
+    attr->rq_psn                = g_ctx.qps[id].remote_connection.psn;
     attr->max_dest_rd_atomic    = 1;
     attr->min_rnr_timer         = 12;
     attr->ah_attr.is_global     = 0;
-    attr->ah_attr.dlid          = data->remote_connection[id].lid;
+    attr->ah_attr.dlid          = g_ctx.qps[id].remote_connection.lid;
     attr->ah_attr.sl            = sl;
     attr->ah_attr.src_path_bits = 0;
-    attr->ah_attr.port_num      = data->ib_port;
+    attr->ah_attr.port_num      = g_ctx.ib_port;
 
     TEST_NZ(ibv_modify_qp(qp, attr,
                 IBV_QP_STATE                |
@@ -592,9 +608,9 @@ static int qp_change_state_rtr(struct ibv_qp *qp, struct app_data *data, int id)
  *  Changes Queue Pair status to RTS (Ready to send)
  *    QP status has to be RTR before changing it to RTS
  */
-static int qp_change_state_rts(struct ibv_qp *qp, struct app_data *data, int id){
+static int qp_change_state_rts(struct ibv_qp *qp, int id){
 
-    qp_change_state_rtr(qp, data, id); 
+    qp_change_state_rtr(qp, id); 
     
     struct ibv_qp_attr *attr;
 
@@ -605,7 +621,7 @@ static int qp_change_state_rts(struct ibv_qp *qp, struct app_data *data, int id)
     attr->timeout               = 14;
     attr->retry_cnt             = 7;
     attr->rnr_retry             = 7;    /* infinite retry */
-    attr->sq_psn                = data->local_connection[id].psn;
+    attr->sq_psn                = g_ctx.qps[id].local_connection.psn;
     attr->max_rd_atomic         = 1;
 
     TEST_NZ(ibv_modify_qp(qp, attr,
@@ -651,76 +667,20 @@ rc_qp_destroy( struct ibv_qp *qp, struct ibv_cq *cq )
  * **********************
  *    Writes 'ctx-buf' into buffer of peer
  */
-static void rdma_write(struct app_context *ctx, struct app_data *data, int id){
+static void rdma_write(int id){
 
-    post_send(ctx->qp[id], ctx->buf, ctx->size, ctx->mr[id]->lkey, data->remote_connection[id].rkey, data->remote_connection[id].vaddr, IBV_WR_RDMA_WRITE, 42);
+    post_send(g_ctx.qps[id].qp, g_ctx.buf, g_ctx.size, g_ctx.qps[id].mr->lkey, g_ctx.qps[id].remote_connection.rkey, g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42);
 
 }    
 
 
 /*
- *  rdma_write
+ *  rdma_read
  * **********************
- *  Writes 'ctx-buf' into buffer of peer
  */
-static void rdma_read(struct app_context *ctx, struct app_data *data, int id){
-    
-    ctx->sge_list.addr      = (uintptr_t)ctx->buf;
-    ctx->sge_list.length    = ctx->size;
-    ctx->sge_list.lkey      = ctx->mr[id]->lkey;
+static void rdma_read(int id){
 
-    ctx->wr.wr.rdma.remote_addr = data->remote_connection[id].vaddr;
-    ctx->wr.wr.rdma.rkey        = data->remote_connection[id].rkey;
-    ctx->wr.wr_id       = RDMA_WRID;
-    ctx->wr.sg_list     = &ctx->sge_list;
-    ctx->wr.num_sge     = 1;
-    ctx->wr.opcode      = IBV_WR_RDMA_READ;
-    ctx->wr.send_flags  = IBV_SEND_SIGNALED;
-    ctx->wr.next        = NULL;
-
-    struct ibv_send_wr *bad_wr;
-
-    int rc = ibv_post_send(ctx->qp[id],&ctx->wr,&bad_wr);
-
-    switch (rc) {
-        case EINVAL: 
-            printf("EINVAL\n");
-            break;
-        case ENOMEM:
-            printf("ENOMEM\n");
-            break;
-        case EFAULT:
-            printf("EFAULT\n");
-            break;
-        default:
-            break;
-    }
-
-    // Conrols if message was competely sent. But fails if client destroys his context to early. This would have to
-    // be timed by the server telling the client that the rdma_write has been completed.
-    int ne;
-    struct ibv_wc wc;
-
-    do {
-        ne = ibv_poll_cq(ctx->cq,1,&wc);
-    } while(ne == 0);
-
-    if (ne < 0) {
-        fprintf(stderr, "%s: poll CQ failed %d\n",
-            __func__, ne);
-    }
-
-    if (wc.status != IBV_WC_SUCCESS) {
-            fprintf(stderr, "%d:%s: Completion with error at %s:\n",
-                pid, __func__, data->servername ? "client" : "server");
-            fprintf(stderr, "%d:%s: Failed status %d: wr_id %d\n",
-                pid, __func__, wc.status, (int) wc.wr_id);
-        }
-
-    if (wc.status == IBV_WC_SUCCESS) {
-        printf("wrid: %i successfull\n",(int)wc.wr_id);
-        printf("%i bytes transfered\n",(int)wc.byte_len);
-    }
+    post_send(g_ctx.qps[id].qp, g_ctx.buf, g_ctx.size, g_ctx.qps[id].mr->lkey, g_ctx.qps[id].remote_connection.rkey, g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_READ, 42);
 
 }
 
@@ -902,26 +862,26 @@ handle_work_completion( struct ibv_wc *wc )
 //     }
 // }
 
-static int
-write_log_slot(log_t* log, size_t index) {
-    log_slot_t* slot = get_slot(log, index);
+// static int
+// write_log_slot(log_t* log, size_t index) {
+//     log_slot_t* slot = get_slot(log, index);
 
-    slot->accValue = v;
-    slot->accProposal = propNr;
+//     slot->accValue = v;
+//     slot->accProposal = propNr;
 
-    // post sends to everyone
-    rdma_write_to_all(slot);
+//     // post sends to everyone
+//     rdma_write_to_all(slot);
 
-    // wait_for_majority
-    wait_for_n();
-}
+//     // wait_for_majority
+//     wait_for_n();
+// }
 
-static void
-rdma_write_to_all(log_slot_t* slot) {
-    for (int i = 0; i < num_clients; ++i) {
-        post_send(ctx->qp[i], slot, sizeof(log_slot_t), ctx->mr[i]->lkey, data->remote_connection[i].rkey, data->remote_connection[i].vaddr, IBV_WR_RDMA_WRITE, 42);
-    }
-}
+// static void
+// rdma_write_to_all(log_slot_t* slot) {
+//     for (int i = 0; i < num_clients; ++i) {
+//         post_send(g_ctx.qp[i], slot, sizeof(log_slot_t), g_ctx.mr[i]->lkey, g_ctx.remote_connection[i].rkey, g_ctx.remote_connection[i].vaddr, IBV_WR_RDMA_WRITE, 42);
+//     }
+// }
 
 static int
 post_send(  struct ibv_qp* qp,
