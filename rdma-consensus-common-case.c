@@ -73,10 +73,17 @@ struct ib_connection {
 
 struct qp_context {
     struct ibv_qp               *qp;
-    struct ibv_mr               *mr;
+    // MR for reading from a remote log into my local copy of that log
+    // Note: different mr_read MRs refer to different phyisical locations, and they have minimal permissions
+    struct ibv_mr               *mr_read;
+    // MR for writing from my local log to another node's log
+    // Note: all mr_write MRs refer to the same physical location, but may have different permissions
+    struct ibv_mr               *mr_write; 
+
     struct ib_connection        local_connection;
     struct ib_connection        remote_connection;
     char                        *servername; // Igor: should we store this per-connection?
+    log_t                       *log_copy;
 };
 
 struct global_context {
