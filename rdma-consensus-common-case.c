@@ -656,7 +656,7 @@ rc_qp_destroy( struct ibv_qp *qp, struct ibv_cq *cq )
  */
 static void rdma_write(int id){
 
-    post_send(g_ctx.qps[id].qp, g_ctx.log, log_size(g_ctx.log), g_ctx.qps[id].mr->lkey, g_ctx.qps[id].remote_connection.rkey, g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42);
+    post_send(g_ctx.qps[id].qp, g_ctx.log.slots[0], log_size(g_ctx.log), g_ctx.qps[id].mr->lkey, g_ctx.qps[id].remote_connection.rkey, g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42);
 
 }    
 
@@ -725,7 +725,6 @@ static int wait_for_n(int n, uint64_t round_nb, struct ibv_cq *cq, int num_entri
             } else if (ret == WC_EXPECTED_ERROR) {
                 // TODO handle the error
             } else { // unexpected error
-                printf("Unexpected error: WC has status %s (%d) \n", ibv_wc_status_str(wc_array[i].status), wc_array[i].status); //debugging
                 die("Unexpeted error while polling");
             }
         }
