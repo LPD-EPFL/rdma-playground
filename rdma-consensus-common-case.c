@@ -13,6 +13,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <stdbool.h>
 
 #include <netdb.h>
 
@@ -136,6 +137,11 @@ static void rdma_read(int id);
 static int permission_switch(struct ibv_mr* old_mr, struct ibv_mr* new_mr, struct ibv_pd* pd, void* addr, size_t length, int old_new_flags, int new_new_flags);
 static int wait_for_n(int n, uint64_t round_nb, struct ibv_cq *cq, int num_entries, struct ibv_wc *wc_array);
 static int handle_work_completion( struct ibv_wc *wc );
+static void outer_loop(log_t *log);
+static void inner_loop(log_t *log, uint64_t propNr);
+static int write_log_slot(log_t* log, size_t index, uint64_t propNr, uint64_t value);
+static void wait_for_majority();
+static void rdma_write_to_all(log_t* log, size_t index);
 static int post_send(struct ibv_qp *qp, void* buf, uint32_t len, uint32_t lkey, uint32_t rkey, uint64_t remote_addr, enum ibv_wr_opcode opcode, uint64_t round_nb);
 
 int main(int argc, char *argv[])
@@ -201,8 +207,7 @@ int main(int argc, char *argv[])
         printf("Press ENTER to continue\n");
         getchar();
 
-        // log_t* log = log_new(15);
-        // outerLoop(log);
+        outer_loop(g_ctx.log);
 
         // printf("Press ENTER to continue\n");
         // getchar();
@@ -211,22 +216,22 @@ int main(int argc, char *argv[])
         //char *chPtr = &(g_ctx.log->slots[0]);
         //strcpy(chPtr,"Saluton Teewurst. UiUi");
 
-        g_ctx.log->minProposal = 70;
-        g_ctx.log->slots[0].accValue = 42;
-        log_slot_t *slot = log_get_local_slot(g_ctx.log, 4);
-        slot->accValue = 42;
+        // g_ctx.log->minProposal = 70;
+        // g_ctx.log->slots[0].accValue = 42;
+        // log_slot_t *slot = log_get_local_slot(g_ctx.log, 4);
+        // slot->accValue = 42;
 
-        // printf("Client. Writing to Server\n");
-        for (int i = 0; i < g_ctx.num_clients; ++i) {
-            // rdma_write(i);
-            uint64_t remote_addr = log_get_remote_address(g_ctx.log, slot, ((log_t*)g_ctx.qps[i].remote_connection.vaddr));
-            post_send(g_ctx.qps[i].qp, slot, sizeof(log_slot_t), g_ctx.qps[i].mr->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, 42);
+        // // printf("Client. Writing to Server\n");
+        // for (int i = 0; i < g_ctx.num_clients; ++i) {
+        //     // rdma_write(i);
+        //     uint64_t remote_addr = log_get_remote_address(g_ctx.log, slot, ((log_t*)g_ctx.qps[i].remote_connection.vaddr));
+        //     post_send(g_ctx.qps[i].qp, slot, sizeof(log_slot_t), g_ctx.qps[i].mr->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, 42);
 
-        }
+        // }
 
-        struct ibv_wc wc;
-        //int n, uint64_t round_nb, struct ibv_cq *cq, int num_entries, struct ibv_wc *wc_array);
-        wait_for_n(g_ctx.num_clients, 42, g_ctx.cq, 1, &wc);
+        // struct ibv_wc wc;
+        // //int n, uint64_t round_nb, struct ibv_cq *cq, int num_entries, struct ibv_wc *wc_array);
+        // wait_for_n(g_ctx.num_clients, 42, g_ctx.cq, 1, &wc);
         
         // printf("Server. Done with write. Reading from client\n");
 
@@ -825,67 +830,69 @@ handle_work_completion( struct ibv_wc *wc )
     return rc;
 }
 
-// static void
-// outer_loop(log_t *log) {
-//     uint64_t propNr;
-//     // while (true) {
-//         // wait until I am leader
-//         // get permissions
-//         // bring followers up to date with me
-//         propNr = 1; // choose number higher than any proposal number seen before
-//         inner_loop(log, propNr);
-//     // }
-// }
+static void
+outer_loop(log_t *log) {
+    uint64_t propNr;
+    // while (true) {
+        // wait until I am leader
+        // get permissions
+        // bring followers up to date with me
+        propNr = 1; // choose number higher than any proposal number seen before
+        inner_loop(log, propNr);
+    // }
+}
 
-// static void
-// inner_loop(log_t *log, uint64_t propNr) {
-//     uint64_t index = 0;
-//     uint64_t v;
+static void
+inner_loop(log_t *log, uint64_t propNr) {
+    uint64_t index = 0;
+    uint64_t v;
 
-//     bool needPreparePhase = true;
+    bool needPreparePhase = true;
 
-//     while (index < 10) {
-//         index = log->firstUndecidedIndex;
-//         // if (needPreparePhase) {
-//         //     // write propNr into minProposal at a majority of logs // if fails, goto outerLoop
-//         //     // read slot at position "index" from a majority of logs // if fails, abort
-//         //     if (none of the slots read have an accepted value) {
-//         //         needPreparePhase = false;
-//         //         v = myValue;
-//         //     } else {
-//         //         v = value with highest accepted proposal among those read
-//         //     }
-//         // }
-//         // write v, propNr into slot at position "index" at a majority of logs // if fails, goto outerLoop
-//         v = index;
-//         write_log_slot(log, index, v, propNr);
-//         log->firstUndecidedIndex += 1    
-//     }
-// }
+    while (index < 10) {
+        index = log->firstUndecidedIndex;
+        // if (needPreparePhase) {
+        //     // write propNr into minProposal at a majority of logs // if fails, goto outerLoop
+        //     // read slot at position "index" from a majority of logs // if fails, abort
+        //     if (none of the slots read have an accepted value) {
+        //         needPreparePhase = false;
+        //         v = myValue;
+        //     } else {
+        //         v = value with highest accepted proposal among those read
+        //     }
+        // }
+        // write v, propNr into slot at position "index" at a majority of logs // if fails, goto outerLoop
+        v = index;
+        write_log_slot(log, index, v, propNr);
+        log->firstUndecidedIndex += 1;    
+    }
+}
 
-// static int
-// write_log_slot(log_t* log, size_t index, uint64_t propNr, uint64_t value) {
-//     log_slot_t* slot =log_get_slot(log, index);
+static int
+write_log_slot(log_t* log, size_t index, uint64_t propNr, uint64_t value) {
+    log_slot_t* slot =log_get_local_slot(log, index);
 
-//     slot->accValue = value;
-//     slot->accProposal = propNr;
+    slot->accValue = value;
+    slot->accProposal = propNr;
 
-//     // post sends to everyone
-//     rdma_write_to_all(log, index);
+    // post sends to everyone
+    rdma_write_to_all(log, index);
 
-//     // wait_for_majority
-//     wait_for_majority();
-// }
+    // wait_for_majority
+    wait_for_majority();
+}
 
-// static void
-// rdma_write_to_all(log_t* log, size_t index) {
-//     log_slot_t* slot =log_get_slot(log, index);
-//     void* remote_addr = (void*)get_slot(g_ctx.remote_connection[i].vaddr, index);
-//     g_ctx.round_nb++;
-//     for (int i = 0; i < g_ctx.num_clients; ++i) {
-//         post_send(g_ctx.qp[i], slot, sizeof(log_slot_t), g_ctx.mr[i]->lkey, g_ctx.remote_connection[i].rkey, remote_addr, IBV_WR_RDMA_WRITE, g_ctx.round_nb);
-//     }
-// }
+static void
+rdma_write_to_all(log_t* log, size_t index) {
+
+    log_slot_t* slot = log_get_local_slot(log, index);
+
+    g_ctx.round_nb++;
+    for (int i = 0; i < g_ctx.num_clients; ++i) {
+        uint64_t remote_addr = log_get_remote_address(log, slot, ((log_t*)g_ctx.qps[i].remote_connection.vaddr));
+        post_send(g_ctx.qps[i].qp, slot, sizeof(log_slot_t), g_ctx.qps[i].mr->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, g_ctx.round_nb);
+    }
+}
 
 static void
 wait_for_majority() {
