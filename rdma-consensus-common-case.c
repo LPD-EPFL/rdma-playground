@@ -158,7 +158,7 @@ int main(int argc, char *argv[])
 
     if(!g_ctx.servername){
         // Print app parameters. This is basically from rdma_bw app. Most of them are not used atm
-        printf("PID=%d | port=%d | ib_port=%d | size=%d | tx_depth=%d | sl=%d |\n",
+        printf("PID=%d | port=%d | ib_port=%d | size=%lu | tx_depth=%d | sl=%d |\n",
             pid, g_ctx.port, g_ctx.ib_port, g_ctx.len, g_ctx.tx_depth, sl);
     }
 
@@ -212,10 +212,16 @@ int main(int argc, char *argv[])
         //strcpy(chPtr,"Saluton Teewurst. UiUi");
 
         g_ctx.log->minProposal = 70;
+        g_ctx.log->slots[0].accValue = 42;
+        log_slot_t *slot = log_get_local_slot(g_ctx.log, 4);
+        slot->accValue = 42;
 
         // printf("Client. Writing to Server\n");
         for (int i = 0; i < g_ctx.num_clients; ++i) {
-            rdma_write(i);
+            // rdma_write(i);
+            uint64_t remote_addr = log_get_remote_address(g_ctx.log, slot, ((log_t*)g_ctx.qps[i].remote_connection.vaddr));
+            post_send(g_ctx.qps[i].qp, slot, sizeof(log_slot_t), g_ctx.qps[i].mr->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, 42);
+
         }
 
         struct ibv_wc wc;
@@ -255,15 +261,19 @@ int main(int argc, char *argv[])
 
         printf("Client. Reading Local-Buffer (Buffer that was registered with MR)\n");
         
-        char *chPtr = (char *)g_ctx.qps[0].local_connection.vaddr;
+        // char *chPtr = (char *)g_ctx.qps[0].local_connection.vaddr;
             
-        while(1){
-            if(strlen(chPtr) > 0){
-                break;
-            }
-        }
+        // while(1){
+        //     if(strlen(chPtr) > 0){
+        //         break;
+        //     }
+        // }
 
-        printf("Printing local buffer: %s\n" ,chPtr);
+
+        printf("Press ENTER to print log\n");
+        getchar();
+
+        log_print(g_ctx.log);
         
         printf("Press ENTER to continue\n");
         getchar();
@@ -818,13 +828,13 @@ handle_work_completion( struct ibv_wc *wc )
 // static void
 // outer_loop(log_t *log) {
 //     uint64_t propNr;
-//     while (true) {
+//     // while (true) {
 //         // wait until I am leader
 //         // get permissions
 //         // bring followers up to date with me
 //         propNr = 1; // choose number higher than any proposal number seen before
 //         inner_loop(log, propNr);
-//     }
+//     // }
 // }
 
 // static void
@@ -855,7 +865,7 @@ handle_work_completion( struct ibv_wc *wc )
 
 // static int
 // write_log_slot(log_t* log, size_t index, uint64_t propNr, uint64_t value) {
-//     log_slot_t* slot = get_slot(log, index);
+//     log_slot_t* slot =log_get_slot(log, index);
 
 //     slot->accValue = value;
 //     slot->accProposal = propNr;
@@ -869,7 +879,7 @@ handle_work_completion( struct ibv_wc *wc )
 
 // static void
 // rdma_write_to_all(log_t* log, size_t index) {
-//     log_slot_t* slot = get_slot(log, index);
+//     log_slot_t* slot =log_get_slot(log, index);
 //     void* remote_addr = (void*)get_slot(g_ctx.remote_connection[i].vaddr, index);
 //     g_ctx.round_nb++;
 //     for (int i = 0; i < g_ctx.num_clients; ++i) {
@@ -877,17 +887,17 @@ handle_work_completion( struct ibv_wc *wc )
 //     }
 // }
 
-// static void
-// wait_for_majority() {
-//     int majority = (g_ctx.num_clients/2) + 1;
+static void
+wait_for_majority() {
+    int majority = (g_ctx.num_clients/2) + 1;
 
-//     // array to store the work completions inside wait_for_n
-//     // we might want to place this in the global context later
-//     struct ibv_wc wc_array[g_ctx.num_clients];
-//     // currently we are polling at most num_clients WCs from the CQ at a time
-//     // we might want to change this number later
-//     wait_for_n(majority, g_ctx.round_nb, g_ctx.cq, g_ctx.num_clients, wc_array);
-// }
+    // array to store the work completions inside wait_for_n
+    // we might want to place this in the global context later
+    struct ibv_wc wc_array[g_ctx.num_clients];
+    // currently we are polling at most num_clients WCs from the CQ at a time
+    // we might want to change this number later
+    wait_for_n(majority, g_ctx.round_nb, g_ctx.cq, g_ctx.num_clients, wc_array);
+}
 
 static int
 post_send(  struct ibv_qp* qp,

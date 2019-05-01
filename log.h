@@ -55,11 +55,32 @@ log_size( log_t* log) {
 // index = the index of the slot to retrieve
 // Return value: a pointer to the specified slot, or NULL of index is too large
 static log_slot_t*
-get_slot(log_t* log, size_t index) {
+log_get_local_slot(log_t* log, size_t index) {
     if (index >= log->len) {
         return NULL;
     }
     return &log->slots[index];
 }
+
+// get remote address corresponding to local slot
+static uint64_t
+log_get_remote_address(log_t* local_log, log_slot_t* local_slot, log_t* remote_log) {
+    return (uint64_t)remote_log + ((uint64_t)local_slot - (uint64_t)local_log);
+}
+
+
+
+static void
+log_print(log_t* log) {
+    printf("{ minProposal = %lu, firstUndecidedIndex = %lu, len = %lu, ", log->minProposal, log->firstUndecidedIndex, log->len);
+    log_slot_t *slot;
+    for (int i = 0; i < log->len; ++i) {
+        slot = log_get_local_slot(log, i);
+        printf("[%lu, %lu] ", slot->accProposal, slot->accValue);
+    }
+    printf("}\n");
+}
+
+
 
 #endif
