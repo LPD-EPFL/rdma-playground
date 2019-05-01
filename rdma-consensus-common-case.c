@@ -140,6 +140,7 @@ static int handle_work_completion( struct ibv_wc *wc );
 static void outer_loop(log_t *log);
 static void inner_loop(log_t *log, uint64_t propNr);
 static int write_log_slot(log_t* log, size_t index, uint64_t propNr, uint64_t value);
+static int write_min_proposal(log_t* log, uint64_t propNr);
 static void wait_for_majority();
 static void rdma_write_to_all(log_t* log, size_t index);
 static int post_send(struct ibv_qp *qp, void* buf, uint32_t len, uint32_t lkey, uint32_t rkey, uint64_t remote_addr, enum ibv_wr_opcode opcode, uint64_t round_nb);
@@ -204,7 +205,7 @@ int main(int argc, char *argv[])
     if(!g_ctx.servername){
         /* Server - RDMA WRITE */
 
-        printf("Press ENTER to continue\n");
+        printf("Press ENTER to start\n");
         getchar();
 
         outer_loop(g_ctx.log);
@@ -247,23 +248,6 @@ int main(int argc, char *argv[])
         // ibv_rereg_mr(g_ctx.mr[1], IBV_REREG_MR_CHANGE_ACCESS, g_ctx.pd, g_ctx.buf, g_ctx.size * 2, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
        
 
-        // time_t start, end;
-        // double elapsed;  // seconds
-        // start = time(NULL);
-        // int terminate = 0;
-        // while (!terminate) {
-        //     end = time(NULL);
-        //     elapsed = difftime(end, start);
-        //     if (elapsed >= 5.0 /* seconds */) {
-        //         terminate = 1;
-        //     }
-        //     else {
-        //         log_print(log);
-        //         usleep(100000);
-        //     } 
-        // }
-        // printf("done..\n");
-
         printf("Client. Reading Local-Buffer (Buffer that was registered with MR)\n");
         
         // char *chPtr = (char *)g_ctx.qps[0].local_connection.vaddr;
@@ -280,7 +264,7 @@ int main(int argc, char *argv[])
 
         log_print(g_ctx.log);
         
-        printf("Press ENTER to continue\n");
+        printf("Press ENTER to exit\n");
         getchar();
     }
     
@@ -851,16 +835,17 @@ inner_loop(log_t *log, uint64_t propNr) {
 
     while (index < 10) {
         index = log->firstUndecidedIndex;
-        // if (needPreparePhase) {
-        //     // write propNr into minProposal at a majority of logs // if fails, goto outerLoop
-        //     // read slot at position "index" from a majority of logs // if fails, abort
+        if (needPreparePhase) {
+            // write propNr into minProposal at a majority of logs // if fails, goto outerLoop
+            write_min_proposal(log, propNr);
+            // read slot at position "index" from a majority of logs // if fails, abort
         //     if (none of the slots read have an accepted value) {
-        //         needPreparePhase = false;
+                needPreparePhase = false;
         //         v = myValue;
         //     } else {
         //         v = value with highest accepted proposal among those read
         //     }
-        // }
+        }
         // write v, propNr into slot at position "index" at a majority of logs // if fails, goto outerLoop
         v = index;
         write_log_slot(log, index, v, propNr);
@@ -879,6 +864,21 @@ write_log_slot(log_t* log, size_t index, uint64_t propNr, uint64_t value) {
     rdma_write_to_all(log, index);
 
     // wait_for_majority
+    wait_for_majority();
+}
+
+static int
+write_min_proposal(log_t* log, uint64_t propNr) {
+    log->minProposal = propNr;
+
+    g_ctx.round_nb++;
+    for (int i = 0; i < g_ctx.num_clients; ++i) {
+        // get the address of minProposal at the remote log
+        uint64_t remote_addr = log_get_remote_address(log, &log->minProposal, ((log_t*)g_ctx.qps[i].remote_connection.vaddr));
+
+        post_send(g_ctx.qps[i].qp, &log->minProposal, sizeof(log->minProposal), g_ctx.qps[i].mr->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, g_ctx.round_nb);
+    }
+
     wait_for_majority();
 }
 

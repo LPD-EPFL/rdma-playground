@@ -62,10 +62,10 @@ log_get_local_slot(log_t* log, size_t index) {
     return &log->slots[index];
 }
 
-// get remote address corresponding to local slot
+// get remote address corresponding to given offset in local log
 static uint64_t
-log_get_remote_address(log_t* local_log, log_slot_t* local_slot, log_t* remote_log) {
-    return (uint64_t)remote_log + ((uint64_t)local_slot - (uint64_t)local_log);
+log_get_remote_address(log_t* local_log, void* local_offset, log_t* remote_log) {
+    return (uint64_t)remote_log + ((uint64_t)local_offset - (uint64_t)local_log);
 }
 
 
