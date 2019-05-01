@@ -725,6 +725,7 @@ static int wait_for_n(int n, uint64_t round_nb, struct ibv_cq *cq, int num_entri
             } else if (ret == WC_EXPECTED_ERROR) {
                 // TODO handle the error
             } else { // unexpected error
+                printf("Unexpected error: WC has status %s (%d) \n", ibv_wc_status_str(&wc_array[i]->status), &wc_array[i]->status); //debugging
                 die("Unexpeted error while polling");
             }
         }
