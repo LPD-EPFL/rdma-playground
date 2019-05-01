@@ -208,7 +208,7 @@ int main(int argc, char *argv[])
         // getchar();
         
         // For now, the message to be written into the clients buffer can be edited here
-        char *chPtr = g_ctx.log;
+        char *chPtr = &(g_ctx.log->slots[0]);
         strcpy(chPtr,"Saluton Teewurst. UiUi");
 
         // printf("Client. Writing to Server\n");
@@ -656,7 +656,7 @@ rc_qp_destroy( struct ibv_qp *qp, struct ibv_cq *cq )
  */
 static void rdma_write(int id){
 
-    post_send(g_ctx.qps[id].qp, g_ctx.log->slots[0], log_size(g_ctx.log), g_ctx.qps[id].mr->lkey, g_ctx.qps[id].remote_connection.rkey, g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42);
+    post_send(g_ctx.qps[id].qp, &(g_ctx.log->slots[0]), log_size(g_ctx.log), g_ctx.qps[id].mr->lkey, g_ctx.qps[id].remote_connection.rkey, g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42);
 
 }    
 
