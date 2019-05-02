@@ -152,6 +152,7 @@ static void inner_loop(log_t *log, uint64_t propNr);
 static int write_log_slot(log_t* log, size_t index, uint64_t propNr, uint64_t value);
 static int write_min_proposal(log_t* log, uint64_t propNr);
 static int copy_remote_logs();
+static uint64_t freshest_accepted_value(uint64_t index);
 static void wait_for_majority();
 static void wait_for_all(); 
 static void rdma_write_to_all(log_t* log, size_t index, write_location_t type);
@@ -862,13 +863,16 @@ inner_loop(log_t *log, uint64_t propNr) {
             // write propNr into minProposal at a majority of logs // if fails, goto outerLoop
             write_min_proposal(log, propNr);
             // read slot at position "index" from a majority of logs // if fails, abort
-            // read_remote_slot(log, index);
-        //     if (none of the slots read have an accepted value) {
+            copy_remote_logs();
+            // value with highest accepted proposal among those read
+            uint64_t freshVal = freshest_accepted_value(index);
+            if (freshVal != 0) {
+                v = freshVal;
+            } else {
                 needPreparePhase = false;
-        //         v = myValue;
-        //     } else {
-        //         v = value with highest accepted proposal among those read
-        //     }
+                // v = get_my_value();
+                v = index;
+            }
         }
         // write v, propNr into slot at position "index" at a majority of logs // if fails, goto outerLoop
         v = index;
@@ -913,9 +917,33 @@ copy_remote_logs() {
         local_address = g_ctx.qps[i].log_copy;
         // we are reading the entire log
         req_size = log_size(g_ctx.log);
-        remote_addr = (void*) g_ctx.qps[i].remote_connection.vaddr;
+        remote_addr = g_ctx.qps[i].remote_connection.vaddr;
         post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_read->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_READ, g_ctx.round_nb);
     }
+}
+
+// Igor: do we need to only look at log slots that have been seen as completed
+// in wait_for_n? 
+static uint64_t
+freshest_accepted_value(uint64_t index) {
+    uint64_t max_acc_prop;
+    uint64_t freshest_value;
+    
+    // start with my accepted proposal and value for the given index
+    log_slot_t* my_slot = log_get_local_slot(g_ctx.log, index);
+    max_acc_prop = my_slot->accProposal;
+    freshest_value = my_slot->accValue;
+
+    log_slot_t* remote_slot;
+    for (int i = 0; i < g_ctx.num_clients; ++i) {
+        remote_slot = log_get_local_slot(g_ctx.qps[i].log_copy, index);
+        if (remote_slot->accProposal > max_acc_prop) {
+            max_acc_prop = remote_slot->accProposal;
+            freshest_value = remote_slot->accValue;
+        }
+    }
+
+    return freshest_value;
 }
 
 
