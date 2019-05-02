@@ -155,8 +155,8 @@ static int copy_remote_logs();
 static uint64_t freshest_accepted_value(uint64_t index);
 static void wait_for_majority();
 static void wait_for_all(); 
-static void rdma_write_to_all(log_t* log, size_t index, write_location_t type);
-static int post_send(struct ibv_qp *qp, void* buf, uint32_t len, uint32_t lkey, uint32_t rkey, uint64_t remote_addr, enum ibv_wr_opcode opcode, uint64_t round_nb);
+static void rdma_write_to_all(log_t* log, size_t index, write_location_t type, bool signaled);
+static int post_send(struct ibv_qp *qp, void* buf, uint32_t len, uint32_t lkey, uint32_t rkey, uint64_t remote_addr, enum ibv_wr_opcode opcode, uint64_t round_nb, bool signaled);
 
 int main(int argc, char *argv[])
 {
@@ -681,7 +681,7 @@ rc_qp_destroy( struct ibv_qp *qp, struct ibv_cq *cq )
  */
 static void rdma_write(int id){
 
-    post_send(g_ctx.qps[id].qp, g_ctx.log, log_size(g_ctx.log), g_ctx.qps[id].mr_write->lkey, g_ctx.qps[id].remote_connection.rkey, g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42);
+    post_send(g_ctx.qps[id].qp, g_ctx.log, log_size(g_ctx.log), g_ctx.qps[id].mr_write->lkey, g_ctx.qps[id].remote_connection.rkey, g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
 
 }    
 
@@ -864,6 +864,7 @@ inner_loop(log_t *log, uint64_t propNr) {
             write_min_proposal(log, propNr);
             // read slot at position "index" from a majority of logs // if fails, abort
             copy_remote_logs();
+            wait_for_majority();
             // value with highest accepted proposal among those read
             uint64_t freshVal = freshest_accepted_value(index);
             if (freshVal != 0) {
@@ -877,6 +878,7 @@ inner_loop(log_t *log, uint64_t propNr) {
         // write v, propNr into slot at position "index" at a majority of logs // if fails, goto outerLoop
         v = index;
         write_log_slot(log, index, v, propNr);
+        wait_for_majority();
         log->firstUndecidedIndex += 1;    
     }
 }
@@ -889,19 +891,15 @@ write_log_slot(log_t* log, size_t index, uint64_t propNr, uint64_t value) {
     slot->accProposal = propNr;
 
     // post sends to everyone
-    rdma_write_to_all(log, index, SLOT);
-
-    // wait_for_majority
-    wait_for_majority();
+    rdma_write_to_all(log, index, SLOT, true);
+    
 }
 
 static int
 write_min_proposal(log_t* log, uint64_t propNr) {
     log->minProposal = propNr;
 
-    rdma_write_to_all(log, 0, MIN_PROPOSAL); // index is ignored for MIN_PROPOSAL
-
-    wait_for_majority();
+    rdma_write_to_all(log, 0, MIN_PROPOSAL, false); // index is ignored for MIN_PROPOSAL
 }
 
 static int
@@ -918,7 +916,7 @@ copy_remote_logs() {
         // we are reading the entire log
         req_size = log_size(g_ctx.log);
         remote_addr = g_ctx.qps[i].remote_connection.vaddr;
-        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_read->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_READ, g_ctx.round_nb);
+        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_read->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_READ, g_ctx.round_nb, true);
     }
 }
 
@@ -948,7 +946,7 @@ freshest_accepted_value(uint64_t index) {
 
 
 static void
-rdma_write_to_all(log_t* log, size_t index, write_location_t type) {
+rdma_write_to_all(log_t* log, size_t index, write_location_t type, bool signaled) {
 
     void* local_address;
     uint64_t remote_addr;
@@ -969,7 +967,7 @@ rdma_write_to_all(log_t* log, size_t index, write_location_t type) {
     for (int i = 0; i < g_ctx.num_clients; ++i) {
 
         remote_addr = log_get_remote_address(log, local_address, ((log_t*)g_ctx.qps[i].remote_connection.vaddr));
-        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, g_ctx.round_nb);
+        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, g_ctx.round_nb, signaled);
     }
 }
 
@@ -1003,7 +1001,8 @@ post_send(  struct ibv_qp* qp,
             uint32_t rkey,
             uint64_t remote_addr,
             enum ibv_wr_opcode opcode,
-            uint64_t round_nb   ) {
+            uint64_t round_nb,
+            bool signaled   ) {
 
     struct ibv_sge sg;
     struct ibv_send_wr wr;
@@ -1019,7 +1018,9 @@ post_send(  struct ibv_qp* qp,
     wr.sg_list    = &sg;
     wr.num_sge    = 1;
     wr.opcode     = opcode;
-    wr.send_flags = IBV_SEND_SIGNALED;
+    if (signaled) {
+        wr.send_flags = IBV_SEND_SIGNALED;
+    }
     wr.wr.rdma.remote_addr = remote_addr;
     wr.wr.rdma.rkey = rkey;
 
