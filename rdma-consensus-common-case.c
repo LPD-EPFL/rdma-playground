@@ -419,8 +419,12 @@ static void init_ctx()
                 "Could not create completion queue, ibv_create_cq"); 
 
     for (int i = 0; i < g_ctx.num_clients; i++) {
-        TEST_Z(g_ctx.qps[i].mr = ibv_reg_mr(g_ctx.pd, (void*)g_ctx.log, log_size(g_ctx.log), 
+        g_ctx.qps[i].log_copy = log_new(g_ctx.len);
+        TEST_Z(g_ctx.qps[i].mr_write = ibv_reg_mr(g_ctx.pd, (void*)g_ctx.log, log_size(g_ctx.log), 
                         IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE),
+                    "Could not allocate mr, ibv_reg_mr. Do you have root access?");
+        TEST_Z(g_ctx.qps[i].mr_read = ibv_reg_mr(g_ctx.pd, (void*)g_ctx.qps[i].log_copy, log_size(g_ctx.qps[i].log_copy), 
+                        IBV_ACCESS_LOCAL_WRITE),
                     "Could not allocate mr, ibv_reg_mr. Do you have root access?");
 
         struct ibv_qp_init_attr qp_init_attr = {
@@ -456,8 +460,11 @@ static void destroy_ctx(){
         "Could not destory completion channel, ibv_destroy_comp_channel");
 
     for (int i = 0; i < g_ctx.num_clients; ++i) {
-        TEST_NZ(ibv_dereg_mr(g_ctx.qps[i].mr),
+        TEST_NZ(ibv_dereg_mr(g_ctx.qps[i].mr_write),
                 "Could not de-register memory region, ibv_dereg_mr");
+        TEST_NZ(ibv_dereg_mr(g_ctx.qps[i].mr_read),
+                "Could not de-register memory region, ibv_dereg_mr");
+        log_free(g_ctx.qps[i].log_copy);
     }
 
     TEST_NZ(ibv_dealloc_pd(g_ctx.pd),
@@ -487,7 +494,7 @@ static void set_local_ib_connection(){
 
     for (int i = 0; i < g_ctx.num_clients; ++i) {
         g_ctx.qps[i].local_connection.qpn = g_ctx.qps[i].qp->qp_num;
-        g_ctx.qps[i].local_connection.rkey = g_ctx.qps[i].mr->rkey;
+        g_ctx.qps[i].local_connection.rkey = g_ctx.qps[i].mr_write->rkey;
         g_ctx.qps[i].local_connection.lid = attr.lid;
         g_ctx.qps[i].local_connection.psn = lrand48() & 0xffffff;
         g_ctx.qps[i].local_connection.vaddr = (uintptr_t)g_ctx.log;
@@ -667,7 +674,7 @@ rc_qp_destroy( struct ibv_qp *qp, struct ibv_cq *cq )
  */
 static void rdma_write(int id){
 
-    post_send(g_ctx.qps[id].qp, g_ctx.log, log_size(g_ctx.log), g_ctx.qps[id].mr->lkey, g_ctx.qps[id].remote_connection.rkey, g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42);
+    post_send(g_ctx.qps[id].qp, g_ctx.log, log_size(g_ctx.log), g_ctx.qps[id].mr_write->lkey, g_ctx.qps[id].remote_connection.rkey, g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42);
 
 }    
 
@@ -678,7 +685,7 @@ static void rdma_write(int id){
  */
 // static void rdma_read(int id){
 
-//     post_send(g_ctx.qps[id].qp, g_ctx.buf, g_ctx.size, g_ctx.qps[id].mr->lkey, g_ctx.qps[id].remote_connection.rkey, g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_READ, 42);
+//     post_send(g_ctx.qps[id].qp, g_ctx.buf, g_ctx.size, g_ctx._read->lkey, g_ctx.qps[id].remote_connection.rkey, g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_READ, 42);
 
 // }
 
@@ -910,7 +917,7 @@ rdma_write_to_all(log_t* log, size_t index, write_location_t type) {
     for (int i = 0; i < g_ctx.num_clients; ++i) {
 
         remote_addr = log_get_remote_address(log, local_address, ((log_t*)g_ctx.qps[i].remote_connection.vaddr));
-        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, g_ctx.round_nb);
+        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, g_ctx.round_nb);
     }
 }
 
