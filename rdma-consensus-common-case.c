@@ -153,6 +153,7 @@ static int write_log_slot(log_t* log, size_t index, uint64_t propNr, uint64_t va
 static int write_min_proposal(log_t* log, uint64_t propNr);
 static int read_min_proposals();
 static int copy_remote_logs(uint64_t index, write_location_t type);
+static void update_followers();
 static uint64_t freshest_accepted_value(uint64_t index);
 static void wait_for_majority();
 static void wait_for_all(); 
@@ -222,6 +223,13 @@ int main(int argc, char *argv[])
 
         printf("Press ENTER to start\n");
         getchar();
+
+        g_ctx.log->firstUndecidedIndex = 3;
+        g_ctx.log->slots[0].accProposal = 4;
+        g_ctx.log->slots[1].accProposal = 4;
+        g_ctx.log->slots[2].accProposal = 4;
+        update_followers;
+
 
         outer_loop(g_ctx.log);
         copy_remote_logs(5, SLOT);
@@ -847,6 +855,7 @@ outer_loop(log_t *log) {
         // wait until I am leader
         // get permissions
         // bring followers up to date with me
+        update_followers();
         propNr = 1; // choose number higher than any proposal number seen before
         inner_loop(log, propNr);
     // }
@@ -864,9 +873,9 @@ inner_loop(log_t *log, uint64_t propNr) {
         if (needPreparePhase) {
             read_min_proposals();
             wait_for_majority();
-            // if (!min_proposal_ok(propNr)) { // check if any of the read minProposals are larger than our propNr
-            //     return;
-            // } 
+            if (!min_proposal_ok(propNr)) { // check if any of the read minProposals are larger than our propNr
+                return;
+            } 
             // write propNr into minProposal at a majority of logs // if fails, goto outerLoop
             write_min_proposal(log, propNr);
             // read slot at position "index" from a majority of logs // if fails, abort
@@ -887,6 +896,45 @@ inner_loop(log_t *log, uint64_t propNr) {
         write_log_slot(log, index, v, propNr);
         wait_for_majority();
         log->firstUndecidedIndex += 1;    
+    }
+}
+
+static void
+update_followers() {
+    void* local_address;
+    uint64_t remote_addr;
+    size_t req_size;
+
+    int nb_to_wait = (g_ctx.num_clients/2) + 1;
+
+    g_ctx.round_nb++;
+    for (int i = 0; i < g_ctx.num_clients; ++i) {
+    //  copy all or a part of the remote log
+    //  overwrite remote log from their firstUn.. to my firstUn...
+        if ( g_ctx.log->firstUndecidedIndex <= g_ctx.qps[i].log_copy->firstUndecidedIndex) {
+            nb_to_wait--;
+            continue;
+        }
+        local_address = log_get_local_slot(g_ctx.log, g_ctx.qps[i].log_copy->firstUndecidedIndex);
+        req_size = sizeof(log_slot_t) * (g_ctx.log->firstUndecidedIndex - g_ctx.qps[i].log_copy->firstUndecidedIndex);
+        remote_addr = log_get_remote_address(g_ctx.log, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
+        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, g_ctx.round_nb, false);
+
+        //  update remote firstUndecidedIndex
+        local_address = &g_ctx.log->firstUndecidedIndex;
+        req_size = sizeof(g_ctx.log->firstUndecidedIndex);
+        remote_addr = log_get_remote_address(g_ctx.log, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
+        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, g_ctx.round_nb, true);        
+
+    }
+
+    if (nb_to_wait > 0) {
+        // array to store the work completions inside wait_for_n
+        // we might want to place this in the global context later
+        struct ibv_wc wc_array[g_ctx.num_clients];
+        // currently we are polling at most num_clients WCs from the CQ at a time
+        // we might want to change this number later
+        wait_for_n(nb_to_wait, g_ctx.round_nb, g_ctx.cq, g_ctx.num_clients, wc_array);        
     }
 }
 
