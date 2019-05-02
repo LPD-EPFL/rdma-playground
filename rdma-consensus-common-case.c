@@ -151,7 +151,9 @@ static void outer_loop(log_t *log);
 static void inner_loop(log_t *log, uint64_t propNr);
 static int write_log_slot(log_t* log, size_t index, uint64_t propNr, uint64_t value);
 static int write_min_proposal(log_t* log, uint64_t propNr);
+static int copy_remote_logs();
 static void wait_for_majority();
+static void wait_for_all(); 
 static void rdma_write_to_all(log_t* log, size_t index, write_location_t type);
 static int post_send(struct ibv_qp *qp, void* buf, uint32_t len, uint32_t lkey, uint32_t rkey, uint64_t remote_addr, enum ibv_wr_opcode opcode, uint64_t round_nb);
 
@@ -219,6 +221,12 @@ int main(int argc, char *argv[])
         getchar();
 
         outer_loop(g_ctx.log);
+        copy_remote_logs();
+        wait_for_all();
+
+        for (int i = 0; i < g_ctx.num_clients; ++i) {
+            log_print(g_ctx.qps[i].log_copy);
+        }
 
         // printf("Press ENTER to continue\n");
         // getchar();
@@ -413,15 +421,13 @@ static void init_ctx()
     g_ctx.qps = malloc(g_ctx.num_clients * sizeof(struct qp_context));
     memset(g_ctx.qps, 0, g_ctx.num_clients * sizeof(struct qp_context));
 
-    // g_ctx.qp  = malloc(g_ctx.num_clients * sizeof(struct ibv_qp*));
-    // g_ctx.mr  = malloc(g_ctx.num_clients * sizeof(struct ibv_mr*));
     TEST_Z(g_ctx.cq = ibv_create_cq(g_ctx.context,g_ctx.tx_depth, NULL,  g_ctx.ch, 0),
                 "Could not create completion queue, ibv_create_cq"); 
 
     for (int i = 0; i < g_ctx.num_clients; i++) {
         g_ctx.qps[i].log_copy = log_new(g_ctx.len);
         TEST_Z(g_ctx.qps[i].mr_write = ibv_reg_mr(g_ctx.pd, (void*)g_ctx.log, log_size(g_ctx.log), 
-                        IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE),
+                        IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE),
                     "Could not allocate mr, ibv_reg_mr. Do you have root access?");
         TEST_Z(g_ctx.qps[i].mr_read = ibv_reg_mr(g_ctx.pd, (void*)g_ctx.qps[i].log_copy, log_size(g_ctx.qps[i].log_copy), 
                         IBV_ACCESS_LOCAL_WRITE),
@@ -556,7 +562,7 @@ static int qp_change_state_init(struct ibv_qp *qp){
     attr->qp_state            = IBV_QPS_INIT;
     attr->pkey_index          = 0;
     attr->port_num            = g_ctx.ib_port;
-    attr->qp_access_flags     = IBV_ACCESS_REMOTE_WRITE;
+    attr->qp_access_flags     = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ;
 
     TEST_NZ(ibv_modify_qp(qp, attr,
                             IBV_QP_STATE        |
@@ -894,6 +900,24 @@ write_min_proposal(log_t* log, uint64_t propNr) {
     wait_for_majority();
 }
 
+static int
+copy_remote_logs() {
+
+    void* local_address;
+    uint64_t remote_addr;
+    size_t req_size;
+
+    g_ctx.round_nb++;
+    for (int i = 0; i < g_ctx.num_clients; ++i) {
+        // we are reading into the local copy of log i
+        local_address = g_ctx.qps[i].log_copy;
+        // we are reading the entire log
+        req_size = log_size(g_ctx.log);
+        remote_addr = (void*) g_ctx.qps[i].remote_connection.vaddr;
+        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_read->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_READ, g_ctx.round_nb);
+    }
+}
+
 
 static void
 rdma_write_to_all(log_t* log, size_t index, write_location_t type) {
@@ -933,6 +957,16 @@ wait_for_majority() {
     wait_for_n(majority, g_ctx.round_nb, g_ctx.cq, g_ctx.num_clients, wc_array);
 }
 
+static void
+wait_for_all() {
+    // array to store the work completions inside wait_for_n
+    // we might want to place this in the global context later
+    struct ibv_wc wc_array[g_ctx.num_clients];
+    // currently we are polling at most num_clients WCs from the CQ at a time
+    // we might want to change this number later
+    wait_for_n(g_ctx.num_clients, g_ctx.round_nb, g_ctx.cq, g_ctx.num_clients, wc_array); 
+}
+
 static int
 post_send(  struct ibv_qp* qp,
             void* buf,
@@ -956,7 +990,7 @@ post_send(  struct ibv_qp* qp,
     WRID_SET_SSN(wr.wr_id, round_nb);
     wr.sg_list    = &sg;
     wr.num_sge    = 1;
-    wr.opcode     = IBV_WR_RDMA_WRITE;
+    wr.opcode     = opcode;
     wr.send_flags = IBV_SEND_SIGNALED;
     wr.wr.rdma.remote_addr = remote_addr;
     wr.wr.rdma.rkey = rkey;
