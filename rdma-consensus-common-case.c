@@ -151,12 +151,14 @@ static void outer_loop(log_t *log);
 static void inner_loop(log_t *log, uint64_t propNr);
 static int write_log_slot(log_t* log, size_t index, uint64_t propNr, uint64_t value);
 static int write_min_proposal(log_t* log, uint64_t propNr);
+static int read_min_proposals();
 static int copy_remote_logs();
 static uint64_t freshest_accepted_value(uint64_t index);
 static void wait_for_majority();
 static void wait_for_all(); 
 static void rdma_write_to_all(log_t* log, size_t index, write_location_t type, bool signaled);
 static int post_send(struct ibv_qp *qp, void* buf, uint32_t len, uint32_t lkey, uint32_t rkey, uint64_t remote_addr, enum ibv_wr_opcode opcode, uint64_t round_nb, bool signaled);
+static bool min_proposal_ok(uint64_t propNr);
 
 int main(int argc, char *argv[])
 {
@@ -860,11 +862,16 @@ inner_loop(log_t *log, uint64_t propNr) {
     while (index < 10) {
         index = log->firstUndecidedIndex;
         if (needPreparePhase) {
+            read_min_proposals();
+            wait_for_majority();
+            // if (!min_proposal_ok(propNr)) { // check if any of the read minProposals are larger than our propNr
+            //     return;
+            // } 
             // write propNr into minProposal at a majority of logs // if fails, goto outerLoop
             write_min_proposal(log, propNr);
             // read slot at position "index" from a majority of logs // if fails, abort
-            copy_remote_logs();
-            wait_for_majority();
+            // copy_remote_logs(index, SLOT);
+            // wait_for_majority();
             // value with highest accepted proposal among those read
             uint64_t freshVal = freshest_accepted_value(index);
             if (freshVal != 0) {
@@ -881,6 +888,18 @@ inner_loop(log_t *log, uint64_t propNr) {
         wait_for_majority();
         log->firstUndecidedIndex += 1;    
     }
+}
+
+static bool
+min_proposal_ok(uint64_t propNr) {
+
+    for (int i = 0; i < g_ctx.num_clients; ++i) {
+        if (g_ctx.qps[i].log_copy->minProposal > propNr) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 static int
@@ -903,20 +922,62 @@ write_min_proposal(log_t* log, uint64_t propNr) {
 }
 
 static int
-copy_remote_logs() {
+read_min_proposals() {
+
+    copy_remote_logs(0, MIN_PROPOSAL);
+}
+
+static int
+copy_remote_logs(uint64_t index, write_location_t type) {
 
     void* local_address;
     uint64_t remote_addr;
     size_t req_size;
+    log_slot_t *slot;
 
     g_ctx.round_nb++;
     for (int i = 0; i < g_ctx.num_clients; ++i) {
-        // we are reading into the local copy of log i
-        local_address = g_ctx.qps[i].log_copy;
-        // we are reading the entire log
-        req_size = log_size(g_ctx.log);
-        remote_addr = g_ctx.qps[i].remote_connection.vaddr;
+
+        switch(type) {
+            case SLOT:
+                slot = log_get_local_slot(g_ctx.qps[i].log_copy, index);
+                local_address = slot;
+                req_size = sizeof(log_slot_t);
+                break;
+            case MIN_PROPOSAL:
+                local_address = &g_ctx.qps[i].log_copy->minProposal;
+                req_size = sizeof(g_ctx.qps[i].log_copy->minProposal);
+                break;
+        }   
+
+        remote_addr = log_get_remote_address(g_ctx.qps[i].log_copy, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
         post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_read->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_READ, g_ctx.round_nb, true);
+    }
+}
+
+static void
+rdma_write_to_all(log_t* log, size_t index, write_location_t type, bool signaled) {
+
+    void* local_address;
+    uint64_t remote_addr;
+    size_t req_size;
+    
+    switch(type) {
+        case SLOT:
+            local_address = log_get_local_slot(log, index);
+            req_size = sizeof(log_slot_t);
+            break;
+        case MIN_PROPOSAL:
+            local_address = &log->minProposal;
+            req_size = sizeof(log->minProposal);
+            break;
+    }
+
+    g_ctx.round_nb++;
+    for (int i = 0; i < g_ctx.num_clients; ++i) {
+
+        remote_addr = log_get_remote_address(log, local_address, ((log_t*)g_ctx.qps[i].remote_connection.vaddr));
+        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, g_ctx.round_nb, signaled);
     }
 }
 
@@ -945,31 +1006,7 @@ freshest_accepted_value(uint64_t index) {
 }
 
 
-static void
-rdma_write_to_all(log_t* log, size_t index, write_location_t type, bool signaled) {
 
-    void* local_address;
-    uint64_t remote_addr;
-    size_t req_size;
-    
-    switch(type) {
-        case SLOT:
-            local_address = log_get_local_slot(log, index);
-            req_size = sizeof(log_slot_t);
-            break;
-        case MIN_PROPOSAL:
-            local_address = &log->minProposal;
-            req_size = sizeof(log->minProposal);
-            break;
-    }
-
-    g_ctx.round_nb++;
-    for (int i = 0; i < g_ctx.num_clients; ++i) {
-
-        remote_addr = log_get_remote_address(log, local_address, ((log_t*)g_ctx.qps[i].remote_connection.vaddr));
-        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, g_ctx.round_nb, signaled);
-    }
-}
 
 static void
 wait_for_majority() {
