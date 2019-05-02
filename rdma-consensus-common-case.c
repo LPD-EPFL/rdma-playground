@@ -152,7 +152,7 @@ static void inner_loop(log_t *log, uint64_t propNr);
 static int write_log_slot(log_t* log, size_t index, uint64_t propNr, uint64_t value);
 static int write_min_proposal(log_t* log, uint64_t propNr);
 static int read_min_proposals();
-static int copy_remote_logs();
+static int copy_remote_logs(uint64_t index, write_location_t type);
 static uint64_t freshest_accepted_value(uint64_t index);
 static void wait_for_majority();
 static void wait_for_all(); 
@@ -224,7 +224,7 @@ int main(int argc, char *argv[])
         getchar();
 
         outer_loop(g_ctx.log);
-        copy_remote_logs();
+        copy_remote_logs(5, SLOT);
         wait_for_all();
 
         for (int i = 0; i < g_ctx.num_clients; ++i) {
@@ -870,8 +870,8 @@ inner_loop(log_t *log, uint64_t propNr) {
             // write propNr into minProposal at a majority of logs // if fails, goto outerLoop
             write_min_proposal(log, propNr);
             // read slot at position "index" from a majority of logs // if fails, abort
-            // copy_remote_logs(index, SLOT);
-            // wait_for_majority();
+            copy_remote_logs(index, SLOT);
+            wait_for_majority();
             // value with highest accepted proposal among those read
             uint64_t freshVal = freshest_accepted_value(index);
             if (freshVal != 0) {
@@ -920,6 +920,7 @@ write_min_proposal(log_t* log, uint64_t propNr) {
 
     rdma_write_to_all(log, 0, MIN_PROPOSAL, false); // index is ignored for MIN_PROPOSAL
 }
+
 
 static int
 read_min_proposals() {
