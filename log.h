@@ -3,15 +3,16 @@
 
 struct log_slot {
     uint64_t accProposal;
-    uint64_t accValue;
+    uint64_t value_len;
+    uint8_t accValue[0];
 };
 typedef struct log_slot log_slot_t;
 
 struct log {
     uint64_t minProposal;
-    uint64_t firstUndecidedIndex;
+    uint64_t firstUndecidedOffset;
     uint64_t len;
-    log_slot_t slots[0];
+    uint8_t slots[0];
 };
 typedef struct log log_t;
 
@@ -19,15 +20,15 @@ typedef struct log log_t;
 
 
 // Allocates and initializes a log
-// len = the number of log slots to allocate
+// len = the size in bytes to allocate for slots
 static log_t* 
 log_new(size_t len) {
-    log_t *log = (log_t*) malloc(sizeof(log_t) + len * sizeof(log_slot_t));
+    log_t *log = (log_t*) malloc(sizeof(log_t) + len);
     if (NULL == log) {
         return NULL;
     }
 
-    memset(log, 0, sizeof(log_t) + len * sizeof(log_slot_t));
+    memset(log, 0, sizeof(log_t) + len);
     log->len = len;
 
     return log;
@@ -47,36 +48,51 @@ log_free( log_t* log )
 // Returns the size of a log in bytes
 static size_t
 log_size( log_t* log) {
-    return (sizeof(log_t) + log->len * sizeof(log_slot_t));
+    return (sizeof(log_t) + log->len);
 }
 
-// Returns a pointer to a slot at a specified index in a log
+// Returns a pointer to a slot at a specified offset in a log
 // log = the log
-// index = the index of the slot to retrieve
-// Return value: a pointer to the specified slot, or NULL of index is too large
+// ofsset = the offset of the slot to retrieve
+// Return value: a pointer to the specified slot, or NULL of offset is too large
 static log_slot_t*
-log_get_local_slot(log_t* log, size_t index) {
-    if (index >= log->len) {
+log_get_local_slot(log_t* log, uint64_t offset) {
+    if (offset >= log->len) {
         return NULL;
     }
-    return &log->slots[index];
+    return (log_slot_t*)(log->slots + offset);
+}
+
+// returns the total size (headers + data) of a log slot at a given offset
+static uint64_t
+log_slot_size(log_t* log, uint64_t offset) {
+    return sizeof(log_slot_t) + log_get_local_slot(log, offset)->value_len;
 }
 
 // get remote address corresponding to given offset in local log
+// Note: unlike other log methods, the offset here is wrt the beginning of the 
+// entire log (not the beginning of the slots)
 static uint64_t
 log_get_remote_address(log_t* local_log, void* local_offset, log_t* remote_log) {
     return (uint64_t)remote_log + ((uint64_t)local_offset - (uint64_t)local_log);
 }
 
+// increments the firstUndecidedOffset of a log
+static void
+log_increment_fuo(log_t *log) {
+    log->firstUndecidedOffset += log_slot_size(log, log->firstUndecidedOffset);
+}
 
-
+// TODO (Igor): I think we need to add end and tail to the log if we wait to print
 static void
 log_print(log_t* log) {
-    printf("{ minProposal = %lu, firstUndecidedIndex = %lu, len = %lu, ", log->minProposal, log->firstUndecidedIndex, log->len);
-    log_slot_t *slot;
-    for (int i = 0; i < log->len; ++i) {
-        slot = log_get_local_slot(log, i);
-        printf("[%lu, %lu] ", slot->accProposal, slot->accValue);
+    printf("{ minProposal = %lu, firstUndecidedOffset = %lu, len = %lu, ", log->minProposal, log->firstUndecidedOffset, log->len);
+    uint64_t offset = 0;
+    log_slot_t *slot = log_get_local_slot(log, offset);
+    while (slot->value_len != 0) {
+        printf("[%lu, %lu] ", slot->accProposal, *(uint64_t*)slot->accValue);
+        offset += log_slot_size(log, offset);
+        slot = log_get_local_slot(log, offset);
     }
     printf("}\n");
 }
