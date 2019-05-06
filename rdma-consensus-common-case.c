@@ -43,9 +43,9 @@
 #define WRID_GET_CONN(wrid) (uint8_t)((wrid) & (0xFF))
 #define WRID_SET_CONN(wrid, conn) (wrid) = (conn | ((wrid >> 8) << 8))
 /* The TAG flag is the 9th lsb */
-#define WRID_GET_TAG(wrid) ((wrid) & (1 << 8))
-#define WRID_SET_TAG(wrid) (wrid) |= 1 << 8
-#define WRID_UNSET_TAG(wrid) (wrid) &= ~(1 << 8)
+#define WRID_IS_COPY_SLOT(wrid) ((wrid) & (1 << 8))
+#define WRID_SET_COPY_SLOT(wrid) (wrid) |= 1 << 8
+#define WRID_UNSET_COPY_SLOT(wrid) (wrid) &= ~(1 << 8)
 /* The WA flag is the 10th lsb */
 #define WRID_GET_WA(wrid) ((wrid) & (1 << 9))
 #define WRID_SET_WA(wrid) (wrid) |= 1 << 9
@@ -158,7 +158,7 @@ static uint64_t freshest_accepted_value(uint64_t offset);
 static void wait_for_majority();
 static void wait_for_all(); 
 static void rdma_write_to_all(log_t* log, uint64_t offset, write_location_t type, bool signaled);
-static int post_send(struct ibv_qp *qp, void* buf, uint32_t len, uint32_t lkey, uint32_t rkey, uint64_t remote_addr, enum ibv_wr_opcode opcode, uint64_t round_nb, bool signaled);
+static int post_send(struct ibv_qp *qp, void* buf, uint32_t len, uint32_t lkey, uint32_t rkey, uint64_t remote_addr, enum ibv_wr_opcode opcode, uint64_t wrid, bool signaled);
 static bool min_proposal_ok(uint64_t propNr);
 
 int main(int argc, char *argv[])
@@ -224,18 +224,19 @@ int main(int argc, char *argv[])
         printf("Press ENTER to start\n");
         getchar();
 
-        // g_ctx.log->firstUndecidedOffset = 3;
-        // g_ctx.log->slots[0].accProposal = 4;
-        // g_ctx.log->slots[1].accProposal = 4;
-        // g_ctx.log->slots[2].accProposal = 4;
-        // update_followers;
+        g_ctx.log->firstUndecidedOffset = 48;
+        log_write_local_slot_uint64(g_ctx.log, 0, 4, 5);
+        log_write_local_slot_uint64(g_ctx.log, 24, 4, 5);
+        log_write_local_slot_uint64(g_ctx.log, 48, 4, 5);
+        update_followers();
 
         outer_loop(g_ctx.log);
-        log_print(g_ctx.log);
-
-        // for (int i = 0; i < g_ctx.num_clients; ++i) {
-        //     log_print(g_ctx.qps[i].log_copy);
-        // }
+        printf("Done with outer loop. Copying logs\n");
+        copy_remote_logs(5, SLOT);
+        wait_for_all();
+        for (int i = 0; i < g_ctx.num_clients; ++i) {
+            log_print(g_ctx.qps[i].log_copy);
+        }
 
         // printf("Press ENTER to continue\n");
         // getchar();
@@ -755,6 +756,11 @@ static int wait_for_n(int n, uint64_t round_nb, struct ibv_cq *cq, int num_entri
                 if (WRID_GET_SSN(wr_id) == round_nb) {
                     success_count++;
                 }
+                if (WRID_IS_COPY_SLOT(wr_id)) {
+                    // go check log_copy at relevant offset
+                    // if value length > DEFAULT_VALUE_SIZE, call copy_remote_logs again with the right length
+                    if ()
+                }
             } else if (ret == WC_EXPECTED_ERROR) {
                 // TODO handle the error
             } else { // unexpected error
@@ -853,7 +859,7 @@ outer_loop(log_t *log) {
         // wait until I am leader
         // get permissions
         // bring followers up to date with me
-        // update_followers();
+        update_followers();
         propNr = 1; // choose number higher than any proposal number seen before
         inner_loop(log, propNr);
     // }
@@ -866,29 +872,29 @@ inner_loop(log_t *log, uint64_t propNr) {
 
     bool needPreparePhase = true;
 
-    while (offset < 10) {
+    while (offset < 100) {
         offset = log->firstUndecidedOffset;
-        // if (needPreparePhase) {
-        //     read_min_proposals();
-        //     wait_for_majority();
-        //     if (!min_proposal_ok(propNr)) { // check if any of the read minProposals are larger than our propNr
-        //         return;
-        //     } 
-        //     // write propNr into minProposal at a majority of logs // if fails, goto outerLoop
-        //     write_min_proposal(log, propNr);
-        //     // read slot at position "offset" from a majority of logs // if fails, abort
-        //     copy_remote_logs(offset, SLOT);
-        //     wait_for_majority();
-        //     // value with highest accepted proposal among those read
-        //     uint64_t freshVal = freshest_accepted_value(offset);
-        //     if (freshVal != 0) {
-        //         v = freshVal;
-        //     } else {
-        //         needPreparePhase = false;
-        //         // v = get_my_value();
-        //         v = offset;
-        //     }
-        // }
+        if (needPreparePhase) {
+            read_min_proposals();
+            wait_for_majority();
+            if (!min_proposal_ok(propNr)) { // check if any of the read minProposals are larger than our propNr
+                return;
+            } 
+            // write propNr into minProposal at a majority of logs // if fails, goto outerLoop
+            write_min_proposal(log, propNr);
+            // read slot at position "offset" from a majority of logs // if fails, abort
+            copy_remote_logs(offset, SLOT, DEFAULT_VALUE_SIZE);
+            wait_for_majority();
+            // value with highest accepted proposal among those read
+            uint64_t freshVal = freshest_accepted_value(offset);
+            if (freshVal != 0) {
+                v = freshVal;
+            } else {
+                needPreparePhase = false;
+                // v = get_my_value();
+                v = offset;
+            }
+        }
         // write v, propNr into slot at position "offset" at a majority of logs // if fails, goto outerLoop
         v = 42;
         write_log_slot(log, offset, propNr, v);
@@ -903,10 +909,12 @@ update_followers() {
     void* local_address;
     uint64_t remote_addr;
     size_t req_size;
+    uint64_t wrid;
 
     int nb_to_wait = (g_ctx.num_clients/2) + 1;
 
     g_ctx.round_nb++;
+    WRID_SET_SSN(wrid, g_ctx.round_nb);
     for (int i = 0; i < g_ctx.num_clients; ++i) {
     //  copy all or a part of the remote log
     //  overwrite remote log from their firstUn.. to my firstUn...
@@ -915,16 +923,16 @@ update_followers() {
             continue;
         }
         local_address = log_get_local_slot(g_ctx.log, g_ctx.qps[i].log_copy->firstUndecidedOffset);
-        // TODO need to go through each slot one by one & add size
-        req_size = sizeof(log_slot_t) * (g_ctx.log->firstUndecidedOffset - g_ctx.qps[i].log_copy->firstUndecidedOffset);
+        // here we are assuming that the logs agree up to g_ctx.qps[i].log_copy->firstUndecidedOffset
+        req_size = g_ctx.log->firstUndecidedOffset - g_ctx.qps[i].log_copy->firstUndecidedOffset;
         remote_addr = log_get_remote_address(g_ctx.log, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
-        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, g_ctx.round_nb, false);
+        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, wrid, false);
 
         //  update remote firstUndecidedOffset
         local_address = &g_ctx.log->firstUndecidedOffset;
         req_size = sizeof(g_ctx.log->firstUndecidedOffset);
         remote_addr = log_get_remote_address(g_ctx.log, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
-        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, g_ctx.round_nb, true);        
+        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, wrid, true);        
 
     }
 
@@ -956,10 +964,7 @@ write_log_slot(log_t* log, uint64_t offset, uint64_t propNr, uint64_t value) {
 
     printf("Write log slot %lu, %lu, %lu\n", offset, propNr, value);
 
-    // TODO define a log function to do this
-    *(uint64_t *)slot->accValue = value;
-    slot->accProposal = propNr;
-    slot->value_len = sizeof(uint64_t);
+    log_write_local_slot_uint64(log, offset, propNr, value);
 
     // post sends to everyone
     rdma_write_to_all(log, offset, SLOT, true);
@@ -981,21 +986,27 @@ read_min_proposals() {
 }
 
 static int
-copy_remote_logs(uint64_t offset, write_location_t type) {
+copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size) {
 
     void* local_address;
     uint64_t remote_addr;
     size_t req_size;
     log_slot_t *slot;
+    uint64_t wrid;
 
     g_ctx.round_nb++;
+    WRID_SET_SSN(wrid, g_ctx.round_nb);
+
     for (int i = 0; i < g_ctx.num_clients; ++i) {
 
         switch(type) {
             case SLOT:
                 slot = log_get_local_slot(g_ctx.qps[i].log_copy, offset);
                 local_address = slot;
-                req_size = log_slot_size(g_ctx.log, offset);
+                // Igor: problem: we can't know ahead of time how big the slot will be
+                // Idea: initially copy a default size (large enough to include the length) and if not enough, copy again
+                req_size = sizeof(log_slot_t) + size;
+                WRID_SET_COPY_SLOT(wrid);
                 break;
             case MIN_PROPOSAL:
                 local_address = &g_ctx.qps[i].log_copy->minProposal;
@@ -1004,7 +1015,7 @@ copy_remote_logs(uint64_t offset, write_location_t type) {
         }   
 
         remote_addr = log_get_remote_address(g_ctx.qps[i].log_copy, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
-        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_read->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_READ, g_ctx.round_nb, true);
+        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_read->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_READ, wrid, true);
     }
 }
 
@@ -1014,7 +1025,9 @@ rdma_write_to_all(log_t* log, uint64_t offset, write_location_t type, bool signa
     void* local_address;
     uint64_t remote_addr;
     size_t req_size;
-    
+    uint64_t wrid;
+
+
     switch(type) {
         case SLOT:
             local_address = log_get_local_slot(log, offset);
@@ -1027,10 +1040,11 @@ rdma_write_to_all(log_t* log, uint64_t offset, write_location_t type, bool signa
     }
 
     g_ctx.round_nb++;
+    WRID_SET_SSN(wrid, g_ctx.round_nb);
     for (int i = 0; i < g_ctx.num_clients; ++i) {
 
         remote_addr = log_get_remote_address(log, local_address, ((log_t*)g_ctx.qps[i].remote_connection.vaddr));
-        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, g_ctx.round_nb, signaled);
+        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, wrid, signaled);
     }
 }
 
@@ -1091,7 +1105,7 @@ post_send(  struct ibv_qp* qp,
             uint32_t rkey,
             uint64_t remote_addr,
             enum ibv_wr_opcode opcode,
-            uint64_t round_nb,
+            uint64_t wrid,
             bool signaled   ) {
 
     struct ibv_sge sg;
@@ -1104,7 +1118,7 @@ post_send(  struct ibv_qp* qp,
     sg.lkey   = lkey;    
 
     memset(&wr, 0, sizeof(wr));
-    WRID_SET_SSN(wr.wr_id, round_nb);
+    wr.wr_id = wrid;
     wr.sg_list    = &sg;
     wr.num_sge    = 1;
     wr.opcode     = opcode;

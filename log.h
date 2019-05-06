@@ -1,6 +1,8 @@
 #ifndef LOG_H
 #define LOG_H
 
+#define DEFAULT_VALUE_SIZE 8 // value size if it is uint64_t
+
 struct log_slot {
     uint64_t accProposal;
     uint64_t value_len;
@@ -83,7 +85,15 @@ log_increment_fuo(log_t *log) {
     log->firstUndecidedOffset += log_slot_size(log, log->firstUndecidedOffset);
 }
 
-// TODO (Igor): I think we need to add end and tail to the log if we wait to print
+static void
+log_write_local_slot_uint64(log_t* log, uint64_t offset, uint64_t propNr, uint64_t val) {
+    log_slot_t *slot = log_get_local_slot(log, offset);
+
+    slot->accProposal = propNr;
+    slot->value_len = sizeof(uint64_t);
+    *(uint64_t *)slot->accValue = val;
+}
+
 static void
 log_print(log_t* log) {
     printf("{ minProposal = %lu, firstUndecidedOffset = %lu, len = %lu, ", log->minProposal, log->firstUndecidedOffset, log->len);
