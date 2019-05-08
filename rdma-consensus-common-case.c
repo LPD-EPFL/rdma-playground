@@ -226,15 +226,17 @@ int main(int argc, char *argv[])
         printf("Press ENTER to start\n");
         getchar();
 
-        g_ctx.log->firstUndecidedOffset = 48;
-        log_write_local_slot_uint64(g_ctx.log, 0, 4, 5);
-        log_write_local_slot_uint64(g_ctx.log, 24, 4, 5);
-        log_write_local_slot_uint64(g_ctx.log, 48, 4, 5);
+        g_ctx.log->firstUndecidedOffset = 0;
+        log_write_local_slot_string(g_ctx.log, g_ctx.log->firstUndecidedOffset, 4, "blablabla");
+        log_increment_fuo(g_ctx.log);
+        log_write_local_slot_uint64(g_ctx.log, g_ctx.log->firstUndecidedOffset, 4, 5);
+        log_increment_fuo(g_ctx.log);
+        log_write_local_slot_uint64(g_ctx.log, g_ctx.log->firstUndecidedOffset, 4, 5);
 
         outer_loop(g_ctx.log);
         printf("Done with outer loop. Copying logs\n");
 
-        copy_remote_logs(0, SLOT, 6);
+        copy_remote_logs(0, SLOT, 7);
         for (int i = 0; i < g_ctx.num_clients; ++i) {
             log_print(g_ctx.qps[i].log_copy);
         }
@@ -1036,6 +1038,10 @@ copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size) {
     int majority = (g_ctx.num_clients/2) + 1;
     int not_ok_slots = majority;
     struct ibv_wc wc_array[g_ctx.num_clients];
+    uint64_t correct_sizes[g_ctx.num_clients];
+    for (int i = 0; i < g_ctx.num_clients; ++i) {
+        correct_sizes[i] = size;
+    }
 
 
     while (not_ok_slots > 0) {
@@ -1045,7 +1051,7 @@ copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size) {
         for (int i = 0; i < g_ctx.num_clients; ++i) {
             if (g_ctx.completed_ops[i] == g_ctx.round_nb) {
                 slot = log_get_local_slot(g_ctx.qps[i].log_copy, offset);
-                if (slot->accValue.len > size) {
+                if (slot->accValue.len > correct_sizes[i]) {
                     not_ok_slots++;
                     // increase length
                     // re-issue the copy for this specific slot
@@ -1053,7 +1059,7 @@ copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size) {
                     // Igor: problem: we can't know ahead of time how big the slot will be
                     // Idea: initially copy a default size (large enough to include the length) and if not enough, copy again
                     req_size = sizeof(log_slot_t) + slot->accValue.len;
-                    size = slot->accValue.len; // so that on the next loop iteration, we compare against the right size
+                    correct_sizes[i] = slot->accValue.len; // so that on the next loop iteration, we compare against the right size
                     WRID_SET_CONN(wrid, i);
                     remote_addr = log_get_remote_address(g_ctx.qps[i].log_copy, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
                     post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_read->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_READ, wrid, true);

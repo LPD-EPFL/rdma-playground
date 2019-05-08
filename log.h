@@ -114,7 +114,11 @@ log_print(log_t* log) {
     uint64_t offset = 0;
     log_slot_t *slot = log_get_local_slot(log, offset);
     while (slot->accValue.len != 0) {
-        printf("[%lu, %lu] ", slot->accProposal, *(uint64_t*)slot->accValue.val);
+        if (slot->accValue.len == 8) {
+            printf("[%lu, %lu] ", slot->accProposal, *(uint64_t*)slot->accValue.val);
+        } else {
+            printf("[%lu, %s] ", slot->accProposal, (char*)slot->accValue.val);
+        }
         offset += log_slot_size(log, offset);
         slot = log_get_local_slot(log, offset);
     }
