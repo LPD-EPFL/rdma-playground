@@ -151,12 +151,12 @@ static int wait_for_n(int n, uint64_t round_nb, struct ibv_cq *cq, int num_entri
 static int handle_work_completion( struct ibv_wc *wc );
 static void outer_loop(log_t *log);
 static void inner_loop(log_t *log, uint64_t propNr);
-static int write_log_slot(log_t* log, uint64_t offset, uint64_t propNr, uint64_t value);
+static int write_log_slot(log_t* log, uint64_t offset, uint64_t propNr, value_t* value);
 static int write_min_proposal(log_t* log, uint64_t propNr);
 static int read_min_proposals();
 static int copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size);
 static void update_followers();
-static uint64_t freshest_accepted_value(uint64_t offset);
+static value_t* freshest_accepted_value(uint64_t offset);
 static void wait_for_majority();
 static void wait_for_all(); 
 static void rdma_write_to_all(log_t* log, uint64_t offset, write_location_t type, bool signaled);
@@ -747,9 +747,6 @@ static int wait_for_n(int n, uint64_t round_nb, struct ibv_cq *cq, int num_entri
     uint64_t wr_id;
     int cid;
 
-    // clear the completed_ops bitmap
-    memset(g_ctx.completed_ops, 0, g_ctx.num_clients * sizeof(int));
-
     while (success_count < n) {
         // poll
         ne = ibv_poll_cq(cq, num_entries, wc_array);
@@ -765,7 +762,7 @@ static int wait_for_n(int n, uint64_t round_nb, struct ibv_cq *cq, int num_entri
                 if (WRID_GET_SSN(wr_id) == round_nb) {
                     success_count++;
                     cid = WRID_GET_CONN(wr_id);
-                    g_ctx.completed_ops[cid] = 1;
+                    g_ctx.completed_ops[cid] = round_nb;
                 }
 
             } else if (ret == WC_EXPECTED_ERROR) {
@@ -875,7 +872,7 @@ outer_loop(log_t *log) {
 static void
 inner_loop(log_t *log, uint64_t propNr) {
     uint64_t offset = 0;
-    uint64_t v;
+    value_t* v;
 
     bool needPreparePhase = true;
 
@@ -892,13 +889,15 @@ inner_loop(log_t *log, uint64_t propNr) {
             // read slot at position "offset" from a majority of logs // if fails, abort
             copy_remote_logs(offset, SLOT, DEFAULT_VALUE_SIZE);
             // value with highest accepted proposal among those read
-            uint64_t freshVal = freshest_accepted_value(offset);
-            if (freshVal != 0) {
+            value_t* freshVal = freshest_accepted_value(offset);
+            if (freshVal->len != 0) {
                 v = freshVal;
             } else {
                 needPreparePhase = false;
                 // v = get_my_value();
-                v = offset;
+                v = malloc(sizeof(value_t) + sizeof(uint64_t));
+                v->len = sizeof(uint64_t);
+                memcpy(v->val, &offset, 8);
             }
         }
         // write v, propNr into slot at position "offset" at a majority of logs // if fails, goto outerLoop
@@ -965,11 +964,16 @@ min_proposal_ok(uint64_t propNr) {
 }
 
 static int
-write_log_slot(log_t* log, uint64_t offset, uint64_t propNr, uint64_t value) {
+write_log_slot(log_t* log, uint64_t offset, uint64_t propNr, value_t* value) {
 
-    printf("Write log slot %lu, %lu, %lu\n", offset, propNr, value);
+    if (value->len <= 8) {
+        printf("Write log slot %lu, %lu, %lu\n", offset, propNr, *(uint64_t*)value->val);
+        log_write_local_slot_uint64(log, offset, propNr, *(uint64_t*)value->val);
+    } else {
+        printf("Write log slot %lu, %lu, %s\n", offset, propNr, value->val);
+        log_write_local_slot_string(log, offset, propNr, (char*)value->val);        
+    }
 
-    log_write_local_slot_uint64(log, offset, propNr, value);
 
     // post sends to everyone
     rdma_write_to_all(log, offset, SLOT, true);
@@ -1039,17 +1043,17 @@ copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size) {
 
         not_ok_slots = 0;
         for (int i = 0; i < g_ctx.num_clients; ++i) {
-            if (g_ctx.completed_ops[i]) {
+            if (g_ctx.completed_ops[i] == g_ctx.round_nb) {
                 slot = log_get_local_slot(g_ctx.qps[i].log_copy, offset);
-                if (slot->value_len > size) {
+                if (slot->accValue.len > size) {
                     not_ok_slots++;
                     // increase length
                     // re-issue the copy for this specific slot
                     local_address = slot;
                     // Igor: problem: we can't know ahead of time how big the slot will be
                     // Idea: initially copy a default size (large enough to include the length) and if not enough, copy again
-                    req_size = sizeof(log_slot_t) + slot->value_len;
-                    size = slot->value_len; // so that on the next loop iteration, we compare against the right size
+                    req_size = sizeof(log_slot_t) + slot->accValue.len;
+                    size = slot->accValue.len; // so that on the next loop iteration, we compare against the right size
                     WRID_SET_CONN(wrid, i);
                     remote_addr = log_get_remote_address(g_ctx.qps[i].log_copy, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
                     post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_read->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_READ, wrid, true);
@@ -1089,26 +1093,27 @@ rdma_write_to_all(log_t* log, uint64_t offset, write_location_t type, bool signa
     }
 }
 
-// Igor: do we need to only look at log slots that have been seen as completed
-// in wait_for_n? 
-static uint64_t
+// Igor - potential problem: we only look at fresh items, but copy_remote_logs might have cleared and overwritten the completed_ops
+// array several times, so we cannot know which are the fresh items
+// Can solve this in wait_for_n: don't clear completed_ops, rather update it with the most recent round_nb for which we have reveiced a 
+static value_t*
 freshest_accepted_value(uint64_t offset) {
     uint64_t max_acc_prop;
-    uint64_t freshest_value;
+    value_t* freshest_value;
     
     // start with my accepted proposal and value for the given offset
     log_slot_t* my_slot = log_get_local_slot(g_ctx.log, offset);
     max_acc_prop = my_slot->accProposal;
-    freshest_value = *(uint64_t*)my_slot->accValue;
+    freshest_value = &my_slot->accValue;
 
     // go only through "fresh" slots (those to which reads were completed in the preceding wait_for_n)
     log_slot_t* remote_slot;
     for (int i = 0; i < g_ctx.num_clients; ++i) {
-        if (g_ctx.completed_ops[i]) {
+        if (g_ctx.completed_ops[i] == g_ctx.round_nb) {
             remote_slot = log_get_local_slot(g_ctx.qps[i].log_copy, offset);
             if (remote_slot->accProposal > max_acc_prop) {
                 max_acc_prop = remote_slot->accProposal;
-                freshest_value = *(uint64_t*)remote_slot->accValue;
+                freshest_value = &remote_slot->accValue;
             }            
         }
     }
