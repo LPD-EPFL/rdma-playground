@@ -16,6 +16,7 @@
 #include <stdbool.h>
 
 #include <netdb.h>
+#include <pthread.h>
 
 #include <infiniband/verbs.h>
 #include "log.h"
@@ -54,9 +55,11 @@ static int die(const char *reason);
 static int tcp_client_connect();
 static void tcp_server_listen();
 
-static void init_ctx();
-static void destroy_ctx();
+static void init_ctx(struct global_context* ctx, bool first_time);
+static void destroy_ctx(struct global_context* ctx);
 
+static void spawn_leader_election_thread();
+static void* leader_election(void* arg);
 
 static void outer_loop(log_t *log);
 static void inner_loop(log_t *log, uint64_t propNr);
@@ -100,9 +103,9 @@ int main(int argc, char *argv[])
     
     page_size = sysconf(_SC_PAGESIZE);
     
-    init_ctx();
+    init_ctx(&g_ctx, true);
 
-    set_local_ib_connection();
+    set_local_ib_connection(&g_ctx);
     
     g_ctx.sockfd = malloc(g_ctx.num_clients * sizeof(g_ctx.sockfd));
     if(g_ctx.servername) { // I am a client
@@ -111,7 +114,9 @@ int main(int argc, char *argv[])
         tcp_server_listen();
     }
 
-    TEST_NZ(tcp_exch_ib_connection_info(),
+    spawn_leader_election_thread();
+
+    TEST_NZ(tcp_exch_ib_connection_info(&g_ctx),
             "Could not exchange connection, tcp_exch_ib_connection");
 
     // Print IB-connection details
@@ -208,7 +213,7 @@ int main(int argc, char *argv[])
     }
     
     printf("Destroying IB context\n");
-    destroy_ctx();
+    destroy_ctx(&g_ctx);
     
     printf("Closing socket\n");
     for (int i = 0; i < g_ctx.num_clients; ++i) {
@@ -217,6 +222,121 @@ int main(int argc, char *argv[])
     return 0;
 }
 
+static void
+spawn_leader_election_thread() {
+    pthread_t le_thread;
+    
+    TEST_NZ(pthread_create(&le_thread, NULL, leader_election, NULL), "Could not create leader election thread");
+
+
+}
+
+static void*
+leader_election(void* arg) {
+    // create & initialize a le context
+    struct global_context le_ctx = {
+        .ib_dev             = g_ctx.ib_dev,
+        .context            = g_ctx.context,
+        .pd                 = NULL,
+        .cq                 = NULL,
+        .ch                 = NULL,
+        .qps                = NULL,
+        .round_nb           = 0,
+        .num_clients        = g_ctx.num_clients,
+        .port               = g_ctx.port,
+        .ib_port            = g_ctx.ib_port,
+        .tx_depth           = g_ctx.tx_depth,
+        .servername         = g_ctx.servername,
+        .log                = NULL,  // the leader thread doesn't use a log, but it does need some memory to associate to a MR
+        .len                = 1000,
+        .completed_ops      = NULL
+    };
+    init_ctx(&le_ctx, false);
+
+    // we don't need a log structure in the leader election thread
+    // for now, zero it out and interpret it as a counter
+    // memset(le_ctx.log,0,log
+
+    // use the tcp connections to exchange qp info
+    set_local_ib_connection(&g_ctx);
+
+    TEST_NZ(tcp_exch_ib_connection_info(&g_ctx),
+            "Could not exchange connection, tcp_exch_ib_connection");
+
+    // Print IB-connection details
+    for (int i = 0; i < le_ctx.num_clients; ++i) {
+        print_ib_connection("Local  Connection", &le_ctx.qps[i].local_connection);
+        print_ib_connection("Remote Connection", &le_ctx.qps[i].remote_connection);    
+    }
+
+
+    // bring the qps to the right states
+    for (int i = 0; i < g_ctx.num_clients; ++i) {
+        qp_change_state_rts(g_ctx.qps[i].qp, i);
+    }
+        
+    uint64_t* counter = (uint64_t*)le_ctx.log;
+    // start the leader election loop
+    while (true) {
+        // increment a local counter
+        *counter++;
+        // read (RDMA) counters of everyone*
+        rdma_read_all_counters();
+        // figure out who is leader
+        decide_leader();
+        // communicate the leader to the main thread
+        // sleep
+    }   
+}
+
+
+rdma_read_all_counters() {
+
+    void* local_address;
+    uint64_t remote_addr;
+    size_t req_size;
+    uint64_t wrid = 0;
+
+    le_ctx.round_nb++;
+    WRID_SET_SSN(wrid, le_ctx.round_nb);
+
+    // TODO shuffle
+
+    for (int i = 0; i < le_ctx.num_clients; ++i) {
+
+        local_address = le_ctx.qps[i].log_copy;
+        req_size = sizeof(uint64_t);
+
+        WRID_SET_CONN(wrid, i);
+        remote_addr = le_ctx.qps[i].remote_connection.vaddr;
+        post_send(le_ctx.qps[i].qp, local_address, req_size, le_ctx.qps[i].mr_read->lkey, le_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_READ, wrid, true);
+    }
+
+    sleep(SHORT_SLEEP_DURATION);
+
+    struct ibv_wc wc_array[le_ctx.num_clients];
+
+    wait_for_n(1, le_ctx.round_nb, le_ctx.cq, le_ctx.num_clients, wc_array, le_ctx.completed_ops);
+
+}
+
+// TODO need to fix ids / names first
+decide_leader() {
+    for (int i = 0; i < le_ctx.num_clients; ++i) {
+        uint64_t* counter_array = (uint64_t*)le_ctx.qps[i].log_copy;
+        if (counter_array[1] != counter_array[2]) {
+            return i;
+        }
+        
+        if (completed_ops[i] == round_nb) {
+            if (counter_array[0] != counter_array[1]) {
+                return i;
+            }
+        }
+    }
+
+    // return myself no smaller id incremented their counter
+}
 
 /*
  *  tcp_client_connect
@@ -301,7 +421,7 @@ static void tcp_server_listen() {
  *    This method initializes the Infiniband Context
  *     It creates structures for: ProtectionDomain, MemoryRegion, CompletionChannel, Completion Queues, Queue Pair
  */
-static void init_ctx()
+static void init_ctx(struct global_context* ctx, bool first_time)
 {
     
     // TEST_NZ(posix_memalign(&g_ctx.buf, page_size, g_ctx.size * 2),
@@ -309,23 +429,25 @@ static void init_ctx()
 
     // memset(g_ctx.buf, 0, g_ctx.size * 2);
 
-    g_ctx.log = log_new(g_ctx.len);
+    ctx->log = log_new(ctx->len);
 
-    g_ctx.completed_ops = malloc(g_ctx.num_clients * sizeof(uint64_t));
-    memset(g_ctx.completed_ops, 0, g_ctx.num_clients * sizeof(uint64_t));
+    ctx->completed_ops = malloc(ctx->num_clients * sizeof(uint64_t));
+    memset(ctx->completed_ops, 0, ctx->num_clients * sizeof(uint64_t));
 
-    struct ibv_device **dev_list;
+    if (first_time) {
+        struct ibv_device **dev_list;
 
-    TEST_Z(dev_list = ibv_get_device_list(NULL),
-            "No IB-device available. get_device_list returned NULL");
+        TEST_Z(dev_list = ibv_get_device_list(NULL),
+                "No IB-device available. get_device_list returned NULL");
 
-    TEST_Z(g_ctx.ib_dev = dev_list[0],
-            "IB-device could not be assigned. Maybe dev_list array is empty");
+        TEST_Z(ctx->ib_dev = dev_list[0],
+                "IB-device could not be assigned. Maybe dev_list array is empty");
 
-    TEST_Z(g_ctx.context = ibv_open_device(g_ctx.ib_dev),
-            "Could not create context, ibv_open_device");
+        TEST_Z(ctx->context = ibv_open_device(ctx->ib_dev),
+                "Could not create context, ibv_open_device");
+    }
     
-    TEST_Z(g_ctx.pd = ibv_alloc_pd(g_ctx.context),
+    TEST_Z(ctx->pd = ibv_alloc_pd(ctx->context),
         "Could not allocate protection domain, ibv_alloc_pd");
 
     /* We dont really want IBV_ACCESS_LOCAL_WRITE, but IB spec says:
@@ -334,30 +456,30 @@ static void init_ctx()
      */
 
     
-    TEST_Z(g_ctx.ch = ibv_create_comp_channel(g_ctx.context),
+    TEST_Z(ctx->ch = ibv_create_comp_channel(ctx->context),
             "Could not create completion channel, ibv_create_comp_channel");
 
-    g_ctx.qps = malloc(g_ctx.num_clients * sizeof(struct qp_context));
-    memset(g_ctx.qps, 0, g_ctx.num_clients * sizeof(struct qp_context));
+    ctx->qps = malloc(ctx->num_clients * sizeof(struct qp_context));
+    memset(ctx->qps, 0, ctx->num_clients * sizeof(struct qp_context));
 
-    TEST_Z(g_ctx.cq = ibv_create_cq(g_ctx.context,g_ctx.tx_depth, NULL,  g_ctx.ch, 0),
+    TEST_Z(ctx->cq = ibv_create_cq(ctx->context,ctx->tx_depth, NULL,  ctx->ch, 0),
                 "Could not create completion queue, ibv_create_cq"); 
 
-    for (int i = 0; i < g_ctx.num_clients; i++) {
-        g_ctx.qps[i].log_copy = log_new(g_ctx.len);
-        TEST_Z(g_ctx.qps[i].mr_write = ibv_reg_mr(g_ctx.pd, (void*)g_ctx.log, log_size(g_ctx.log), 
+    for (int i = 0; i < ctx->num_clients; i++) {
+        ctx->qps[i].log_copy = log_new(ctx->len);
+        TEST_Z(ctx->qps[i].mr_write = ibv_reg_mr(ctx->pd, (void*)ctx->log, log_size(ctx->log), 
                         IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE),
                     "Could not allocate mr, ibv_reg_mr. Do you have root access?");
-        TEST_Z(g_ctx.qps[i].mr_read = ibv_reg_mr(g_ctx.pd, (void*)g_ctx.qps[i].log_copy, log_size(g_ctx.qps[i].log_copy), 
+        TEST_Z(ctx->qps[i].mr_read = ibv_reg_mr(ctx->pd, (void*)ctx->qps[i].log_copy, log_size(ctx->qps[i].log_copy), 
                         IBV_ACCESS_LOCAL_WRITE),
                     "Could not allocate mr, ibv_reg_mr. Do you have root access?");
 
         struct ibv_qp_init_attr qp_init_attr = {
-            .send_cq = g_ctx.cq,
-            .recv_cq = g_ctx.cq,
+            .send_cq = ctx->cq,
+            .recv_cq = ctx->cq,
             .qp_type = IBV_QPT_RC,
             .cap = {
-                .max_send_wr = g_ctx.tx_depth,
+                .max_send_wr = ctx->tx_depth,
                 .max_recv_wr = 1,
                 .max_send_sge = 1,
                 .max_recv_sge = 1,
@@ -365,38 +487,38 @@ static void init_ctx()
             }
         };
 
-        TEST_Z(g_ctx.qps[i].qp = ibv_create_qp(g_ctx.pd, &qp_init_attr),
+        TEST_Z(ctx->qps[i].qp = ibv_create_qp(ctx->pd, &qp_init_attr),
                 "Could not create queue pair, ibv_create_qp");    
         
-        qp_change_state_init(g_ctx.qps[i].qp);        
+        qp_change_state_init(ctx->qps[i].qp);        
     }
 }
 
-static void destroy_ctx(){
+static void destroy_ctx(struct global_context* ctx){
         
-    for (int i = 0; i < g_ctx.num_clients; i++) {
-        rc_qp_destroy( g_ctx.qps[i].qp, g_ctx.cq );
+    for (int i = 0; i < ctx->num_clients; i++) {
+        rc_qp_destroy( ctx->qps[i].qp, ctx->cq );
     }
         
-    TEST_NZ(ibv_destroy_cq(g_ctx.cq),
+    TEST_NZ(ibv_destroy_cq(ctx->cq),
             "Could not destroy completion queue, ibv_destroy_cq");
 
-    TEST_NZ(ibv_destroy_comp_channel(g_ctx.ch),
+    TEST_NZ(ibv_destroy_comp_channel(ctx->ch),
         "Could not destory completion channel, ibv_destroy_comp_channel");
 
-    for (int i = 0; i < g_ctx.num_clients; ++i) {
-        TEST_NZ(ibv_dereg_mr(g_ctx.qps[i].mr_write),
+    for (int i = 0; i < ctx->num_clients; ++i) {
+        TEST_NZ(ibv_dereg_mr(ctx->qps[i].mr_write),
                 "Could not de-register memory region, ibv_dereg_mr");
-        TEST_NZ(ibv_dereg_mr(g_ctx.qps[i].mr_read),
+        TEST_NZ(ibv_dereg_mr(ctx->qps[i].mr_read),
                 "Could not de-register memory region, ibv_dereg_mr");
-        log_free(g_ctx.qps[i].log_copy);
+        log_free(ctx->qps[i].log_copy);
     }
 
-    TEST_NZ(ibv_dealloc_pd(g_ctx.pd),
+    TEST_NZ(ibv_dealloc_pd(ctx->pd),
             "Could not deallocate protection domain, ibv_dealloc_pd");    
     
-    log_free(g_ctx.log);
-    free(g_ctx.completed_ops);
+    log_free(ctx->log);
+    free(ctx->completed_ops);
     
 }
 

@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS=-Wall -g
-LDFLAGS= -lrdmacm -libverbs
+LDFLAGS= -lrdmacm -libverbs -pthread
 BIN=./bin/main
 
 # SOURCES    := ${wildcard *.c}

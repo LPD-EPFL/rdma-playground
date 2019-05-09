@@ -16,19 +16,19 @@ static int sl = 1;
  *      rkey - Remote Key, together with 'vaddr' identifies and grants access to memory region
  *      vaddr - Virtual Address, memory address that peer can later write to
  */
-void set_local_ib_connection(){
+void set_local_ib_connection(struct global_context* ctx){
 
     // First get local lid
     struct ibv_port_attr attr;
-    TEST_NZ(ibv_query_port(g_ctx.context,g_ctx.ib_port,&attr),
+    TEST_NZ(ibv_query_port(ctx->context,ctx->ib_port,&attr),
         "Could not get port attributes, ibv_query_port");
 
-    for (int i = 0; i < g_ctx.num_clients; ++i) {
-        g_ctx.qps[i].local_connection.qpn = g_ctx.qps[i].qp->qp_num;
-        g_ctx.qps[i].local_connection.rkey = g_ctx.qps[i].mr_write->rkey;
-        g_ctx.qps[i].local_connection.lid = attr.lid;
-        g_ctx.qps[i].local_connection.psn = lrand48() & 0xffffff;
-        g_ctx.qps[i].local_connection.vaddr = (uintptr_t)g_ctx.log;
+    for (int i = 0; i < ctx->num_clients; ++i) {
+        ctx->qps[i].local_connection.qpn = ctx->qps[i].qp->qp_num;
+        ctx->qps[i].local_connection.rkey = ctx->qps[i].mr_write->rkey;
+        ctx->qps[i].local_connection.lid = attr.lid;
+        ctx->qps[i].local_connection.psn = lrand48() & 0xffffff;
+        ctx->qps[i].local_connection.vaddr = (uintptr_t)ctx->log;
     }
 
 }
@@ -40,27 +40,27 @@ void print_ib_connection(char *conn_name, struct ib_connection *conn){
 
 }
 
-int tcp_exch_ib_connection_info(){
+int tcp_exch_ib_connection_info(struct global_context* ctx){
 
     char msg[sizeof "0000:000000:000000:00000000:0000000000000000"];
     int parsed;
 
     struct ib_connection *local;
     
-    for (int i = 0; i < g_ctx.num_clients; ++i) {
-        local = &g_ctx.qps[i].local_connection; 
+    for (int i = 0; i < ctx->num_clients; ++i) {
+        local = &ctx->qps[i].local_connection; 
         sprintf(msg, "%04x:%06x:%06x:%08x:%016Lx", 
                 local->lid, local->qpn, local->psn, local->rkey, local->vaddr);
-        if(write(g_ctx.sockfd[i], msg, sizeof msg) != sizeof msg){
+        if(write(ctx->sockfd[i], msg, sizeof msg) != sizeof msg){
             perror("Could not send connection_details to peer");
             return -1;
         }    
 
-        if(read(g_ctx.sockfd[i], msg, sizeof msg) != sizeof msg){
+        if(read(ctx->sockfd[i], msg, sizeof msg) != sizeof msg){
             perror("Could not receive connection_details to peer");
             return -1;
         }
-        struct ib_connection *remote = &g_ctx.qps[i].remote_connection;
+        struct ib_connection *remote = &ctx->qps[i].remote_connection;
         parsed = sscanf(msg, "%x:%x:%x:%x:%Lx", 
                             &remote->lid, &remote->qpn, &remote->psn, &remote->rkey, &remote->vaddr);
         

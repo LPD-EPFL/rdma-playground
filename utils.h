@@ -85,7 +85,6 @@ struct global_context {
     struct ibv_device           *ib_dev;
     struct ibv_context          *context;
     struct ibv_pd               *pd;
-    
     struct ibv_cq               *cq;
     struct ibv_comp_channel     *ch;
     struct qp_context           *qps;
