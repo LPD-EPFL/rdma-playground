@@ -24,6 +24,7 @@
 #include "utils.h"
 
 #define RDMA_WRID 3
+#define SHORT_SLEEP_DURATION 1
 
 static int page_size;
 static int sl = 1;
