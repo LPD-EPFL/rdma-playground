@@ -2,6 +2,7 @@
 #define LOG_H
 
 #define DEFAULT_VALUE_SIZE 8 // value size if it is uint64_t
+#define DEFAULT_LOG_LENGTH 1000
 
 struct value_t {
     uint64_t len;
@@ -23,20 +24,27 @@ struct log {
 };
 typedef struct log log_t;
 
+struct counter {
+    uint64_t count_cur;
+    uint64_t count_old;
+    uint64_t count_oldest;
+};
+typedef struct counter counter_t;
+
 /* ================================================================== */
 
 
 // Allocates and initializes a log
 // len = the size in bytes to allocate for slots
 static log_t* 
-log_new(size_t len) {
-    log_t *log = (log_t*) malloc(sizeof(log_t) + len);
+log_new() {
+    log_t *log = (log_t*) malloc(sizeof(log_t) + DEFAULT_LOG_LENGTH);
     if (NULL == log) {
         return NULL;
     }
 
-    memset(log, 0, sizeof(log_t) + len);
-    log->len = len;
+    memset(log, 0, sizeof(log_t) + DEFAULT_LOG_LENGTH);
+    log->len = DEFAULT_LOG_LENGTH;
 
     return log;
 }

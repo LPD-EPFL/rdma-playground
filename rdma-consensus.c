@@ -42,8 +42,26 @@ struct global_context g_ctx = {
     .ib_port            = 1,
     .tx_depth           = 100,
     .servername         = NULL,
-    .log                = NULL,
-    .len                = 1000,
+    .buf.log            = NULL,
+    .len                = 0,
+    .completed_ops      = NULL
+};
+
+struct global_context le_ctx = {
+    .ib_dev             = NULL,
+    .context            = NULL,
+    .pd                 = NULL,
+    .cq                 = NULL,
+    .ch                 = NULL,
+    .qps                = NULL,
+    .round_nb           = 0,
+    .num_clients        = 0,
+    .port               = 18515,
+    .ib_port            = 1,
+    .tx_depth           = 100,
+    .servername         = NULL,
+    .buf.counter        = NULL,
+    .len                = 0,
     .completed_ops      = NULL
 };
 
@@ -55,11 +73,16 @@ static int die(const char *reason);
 static int tcp_client_connect();
 static void tcp_server_listen();
 
-static void init_ctx(struct global_context* ctx, bool first_time);
+static void init_ctx_common(struct global_context* ctx, bool first_time);
+static void init_buf_le(struct global_context* ctx);
+static void init_buf_consensus(struct global_context* ctx);
 static void destroy_ctx(struct global_context* ctx);
 
 static void spawn_leader_election_thread();
 static void* leader_election(void* arg);
+static void rdma_read_all_counters();
+static void decide_leader();
+
 
 static void outer_loop(log_t *log);
 static void inner_loop(log_t *log, uint64_t propNr);
@@ -103,7 +126,8 @@ int main(int argc, char *argv[])
     
     page_size = sysconf(_SC_PAGESIZE);
     
-    init_ctx(&g_ctx, true);
+    init_buf_consensus(&g_ctx);
+    init_ctx_common(&g_ctx, true);
 
     set_local_ib_connection(&g_ctx);
     
@@ -114,7 +138,7 @@ int main(int argc, char *argv[])
         tcp_server_listen();
     }
 
-    spawn_leader_election_thread();
+    // spawn_leader_election_thread();
 
     TEST_NZ(tcp_exch_ib_connection_info(&g_ctx),
             "Could not exchange connection, tcp_exch_ib_connection");
@@ -139,37 +163,37 @@ int main(int argc, char *argv[])
         printf("Press ENTER to start\n");
         getchar();
 
-        g_ctx.log->firstUndecidedOffset = 0;
-        log_write_local_slot_string(g_ctx.log, g_ctx.log->firstUndecidedOffset, 4, "blablabla");
-        log_increment_fuo(g_ctx.log);
-        log_write_local_slot_uint64(g_ctx.log, g_ctx.log->firstUndecidedOffset, 4, 5);
-        log_increment_fuo(g_ctx.log);
-        log_write_local_slot_uint64(g_ctx.log, g_ctx.log->firstUndecidedOffset, 4, 5);
+        g_ctx.buf.log->firstUndecidedOffset = 0;
+        log_write_local_slot_string(g_ctx.buf.log, g_ctx.buf.log->firstUndecidedOffset, 4, "blablabla");
+        log_increment_fuo(g_ctx.buf.log);
+        log_write_local_slot_uint64(g_ctx.buf.log, g_ctx.buf.log->firstUndecidedOffset, 4, 5);
+        log_increment_fuo(g_ctx.buf.log);
+        log_write_local_slot_uint64(g_ctx.buf.log, g_ctx.buf.log->firstUndecidedOffset, 4, 5);
 
-        outer_loop(g_ctx.log);
+        outer_loop(g_ctx.buf.log);
         printf("Done with outer loop. Copying logs\n");
 
         copy_remote_logs(0, SLOT, 7);
         for (int i = 0; i < g_ctx.num_clients; ++i) {
-            log_print(g_ctx.qps[i].log_copy);
+            log_print(g_ctx.qps[i].buf_copy.log);
         }
 
         // printf("Press ENTER to continue\n");
         // getchar();
         
         // For now, the message to be written into the clients buffer can be edited here
-        //char *chPtr = &(g_ctx.log->slots[0]);
+        //char *chPtr = &(g_ctx.buf.log->slots[0]);
         //strcpy(chPtr,"Saluton Teewurst. UiUi");
 
-        // g_ctx.log->minProposal = 70;
-        // g_ctx.log->slots[0].accValue = 42;
-        // log_slot_t *slot = log_get_local_slot(g_ctx.log, 4);
+        // g_ctx.buf.log->minProposal = 70;
+        // g_ctx.buf.log->slots[0].accValue = 42;
+        // log_slot_t *slot = log_get_local_slot(g_ctx.buf.log, 4);
         // slot->accValue = 42;
 
         // // printf("Client. Writing to Server\n");
         // for (int i = 0; i < g_ctx.num_clients; ++i) {
         //     // rdma_write(i);
-        //     uint64_t remote_addr = log_get_remote_address(g_ctx.log, slot, ((log_t*)g_ctx.qps[i].remote_connection.vaddr));
+        //     uint64_t remote_addr = log_get_remote_address(g_ctx.buf.log, slot, ((log_t*)g_ctx.qps[i].remote_connection.vaddr));
         //     post_send(g_ctx.qps[i].qp, slot, sizeof(log_slot_t), g_ctx.qps[i].mr->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, 42);
 
         // }
@@ -206,7 +230,7 @@ int main(int argc, char *argv[])
         printf("Press ENTER to print log\n");
         getchar();
 
-        log_print(g_ctx.log);
+        log_print(g_ctx.buf.log);
         
         printf("Press ENTER to exit\n");
         getchar();
@@ -227,35 +251,25 @@ spawn_leader_election_thread() {
     pthread_t le_thread;
     
     TEST_NZ(pthread_create(&le_thread, NULL, leader_election, NULL), "Could not create leader election thread");
-
-
 }
 
 static void*
 leader_election(void* arg) {
     // create & initialize a le context
-    struct global_context le_ctx = {
-        .ib_dev             = g_ctx.ib_dev,
-        .context            = g_ctx.context,
-        .pd                 = NULL,
-        .cq                 = NULL,
-        .ch                 = NULL,
-        .qps                = NULL,
-        .round_nb           = 0,
-        .num_clients        = g_ctx.num_clients,
-        .port               = g_ctx.port,
-        .ib_port            = g_ctx.ib_port,
-        .tx_depth           = g_ctx.tx_depth,
-        .servername         = g_ctx.servername,
-        .log                = NULL,  // the leader thread doesn't use a log, but it does need some memory to associate to a MR
-        .len                = 1000,
-        .completed_ops      = NULL
-    };
-    init_ctx(&le_ctx, false);
+    le_ctx.ib_dev             = g_ctx.ib_dev;
+    le_ctx.context            = g_ctx.context;
+    le_ctx.num_clients        = g_ctx.num_clients;
+    le_ctx.port               = g_ctx.port;
+    le_ctx.ib_port            = g_ctx.ib_port;
+    le_ctx.tx_depth           = g_ctx.tx_depth;
+    le_ctx.servername         = g_ctx.servername;
+ 
+    init_buf_le(&le_ctx);
+    init_ctx_common(&le_ctx, false);
 
     // we don't need a log structure in the leader election thread
     // for now, zero it out and interpret it as a counter
-    // memset(le_ctx.log,0,log
+    // memset(le_ctx.buf.log,0,log
 
     // use the tcp connections to exchange qp info
     set_local_ib_connection(&g_ctx);
@@ -275,11 +289,10 @@ leader_election(void* arg) {
         qp_change_state_rts(g_ctx.qps[i].qp, i);
     }
         
-    uint64_t* counter = (uint64_t*)le_ctx.log;
     // start the leader election loop
     while (true) {
         // increment a local counter
-        *counter++;
+        le_ctx.buf.counter->count_cur++;
         // read (RDMA) counters of everyone*
         rdma_read_all_counters();
         // figure out who is leader
@@ -289,7 +302,7 @@ leader_election(void* arg) {
     }   
 }
 
-
+static void
 rdma_read_all_counters() {
 
     void* local_address;
@@ -304,7 +317,7 @@ rdma_read_all_counters() {
 
     for (int i = 0; i < le_ctx.num_clients; ++i) {
 
-        local_address = le_ctx.qps[i].log_copy;
+        local_address = le_ctx.qps[i].buf_copy.counter;
         req_size = sizeof(uint64_t);
 
         WRID_SET_CONN(wrid, i);
@@ -321,16 +334,19 @@ rdma_read_all_counters() {
 }
 
 // TODO need to fix ids / names first
+static void
 decide_leader() {
     for (int i = 0; i < le_ctx.num_clients; ++i) {
-        uint64_t* counter_array = (uint64_t*)le_ctx.qps[i].log_copy;
-        if (counter_array[1] != counter_array[2]) {
-            return i;
+
+        counter_t* counters = le_ctx.qps[i].buf_copy.counter;
+        if (counters->count_old != counters->count_oldest) {
+            // return i;
+            printf("Node %d is a valid leader\n", i);
         }
         
-        if (completed_ops[i] == round_nb) {
-            if (counter_array[0] != counter_array[1]) {
-                return i;
+        if (le_ctx.completed_ops[i] == le_ctx.round_nb) {
+            if (counters->count_cur != counters->count_old) {
+                printf("Node %d is a valid leader\n", i);
             }
         }
     }
@@ -415,21 +431,36 @@ static void tcp_server_listen() {
 
 }
 
+static void init_buf_le(struct global_context* ctx) {
+    le_ctx.buf.counter = malloc(sizeof(counter_t));
+    le_ctx.len = sizeof(counter_t);
+    for (int i = 0; i < ctx->num_clients; i++) {
+        ctx->qps[i].buf_copy.counter = malloc(sizeof(counter_t));
+    }
+}
+
+static void init_buf_consensus(struct global_context* ctx) {
+
+    g_ctx.buf.log = log_new();
+    g_ctx.len = log_size(g_ctx.buf.log);
+    for (int i = 0; i < ctx->num_clients; i++) {
+        ctx->qps[i].buf_copy.log = log_new();
+    }
+}
+
 /*
  *     init_ctx
  * **********
  *    This method initializes the Infiniband Context
  *     It creates structures for: ProtectionDomain, MemoryRegion, CompletionChannel, Completion Queues, Queue Pair
  */
-static void init_ctx(struct global_context* ctx, bool first_time)
+static void init_ctx_common(struct global_context* ctx, bool first_time)
 {
     
     // TEST_NZ(posix_memalign(&g_ctx.buf, page_size, g_ctx.size * 2),
                 // "could not allocate working buffer g_ctx.buf");
 
     // memset(g_ctx.buf, 0, g_ctx.size * 2);
-
-    ctx->log = log_new(ctx->len);
 
     ctx->completed_ops = malloc(ctx->num_clients * sizeof(uint64_t));
     memset(ctx->completed_ops, 0, ctx->num_clients * sizeof(uint64_t));
@@ -466,11 +497,10 @@ static void init_ctx(struct global_context* ctx, bool first_time)
                 "Could not create completion queue, ibv_create_cq"); 
 
     for (int i = 0; i < ctx->num_clients; i++) {
-        ctx->qps[i].log_copy = log_new(ctx->len);
-        TEST_Z(ctx->qps[i].mr_write = ibv_reg_mr(ctx->pd, (void*)ctx->log, log_size(ctx->log), 
+        TEST_Z(ctx->qps[i].mr_write = ibv_reg_mr(ctx->pd, (void*)ctx->buf, ctx->len, 
                         IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE),
                     "Could not allocate mr, ibv_reg_mr. Do you have root access?");
-        TEST_Z(ctx->qps[i].mr_read = ibv_reg_mr(ctx->pd, (void*)ctx->qps[i].log_copy, log_size(ctx->qps[i].log_copy), 
+        TEST_Z(ctx->qps[i].mr_read = ibv_reg_mr(ctx->pd, (void*)ctx->qps[i].buf_copy, ctx->len, 
                         IBV_ACCESS_LOCAL_WRITE),
                     "Could not allocate mr, ibv_reg_mr. Do you have root access?");
 
@@ -511,7 +541,7 @@ static void destroy_ctx(struct global_context* ctx){
                 "Could not de-register memory region, ibv_dereg_mr");
         TEST_NZ(ibv_dereg_mr(ctx->qps[i].mr_read),
                 "Could not de-register memory region, ibv_dereg_mr");
-        log_free(ctx->qps[i].log_copy);
+        log_free(ctx->qps[i].buf_copy.log);
     }
 
     TEST_NZ(ibv_dealloc_pd(ctx->pd),
@@ -591,21 +621,21 @@ update_followers() {
     for (int i = 0; i < g_ctx.num_clients; ++i) {
     //  copy all or a part of the remote log
     //  overwrite remote log from their firstUn.. to my firstUn...
-        if ( g_ctx.log->firstUndecidedOffset <= g_ctx.qps[i].log_copy->firstUndecidedOffset) {
+        if ( g_ctx.buf.log->firstUndecidedOffset <= g_ctx.qps[i].buf_copy.log->firstUndecidedOffset) {
             nb_to_wait--;
             continue;
         }
         WRID_SET_CONN(wrid, i);
-        local_address = log_get_local_slot(g_ctx.log, g_ctx.qps[i].log_copy->firstUndecidedOffset);
-        // here we are assuming that the logs agree up to g_ctx.qps[i].log_copy->firstUndecidedOffset
-        req_size = g_ctx.log->firstUndecidedOffset - g_ctx.qps[i].log_copy->firstUndecidedOffset;
-        remote_addr = log_get_remote_address(g_ctx.log, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
+        local_address = log_get_local_slot(g_ctx.buf.log, g_ctx.qps[i].buf_copy.log->firstUndecidedOffset);
+        // here we are assuming that the logs agree up to g_ctx.qps[i].buf_copy.log->firstUndecidedOffset
+        req_size = g_ctx.buf.log->firstUndecidedOffset - g_ctx.qps[i].buf_copy.log->firstUndecidedOffset;
+        remote_addr = log_get_remote_address(g_ctx.buf.log, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
         post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, wrid, false);
 
         //  update remote firstUndecidedOffset
-        local_address = &g_ctx.log->firstUndecidedOffset;
-        req_size = sizeof(g_ctx.log->firstUndecidedOffset);
-        remote_addr = log_get_remote_address(g_ctx.log, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
+        local_address = &g_ctx.buf.log->firstUndecidedOffset;
+        req_size = sizeof(g_ctx.buf.log->firstUndecidedOffset);
+        remote_addr = log_get_remote_address(g_ctx.buf.log, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
         post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, wrid, true);        
 
     }
@@ -624,7 +654,7 @@ static bool
 min_proposal_ok(uint64_t propNr) {
 
     for (int i = 0; i < g_ctx.num_clients; ++i) {
-        if (g_ctx.qps[i].log_copy->minProposal > propNr) {
+        if (g_ctx.qps[i].buf_copy.log->minProposal > propNr) {
             return false;
         }
     }
@@ -679,20 +709,20 @@ copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size) {
 
         switch(type) {
             case SLOT:
-                slot = log_get_local_slot(g_ctx.qps[i].log_copy, offset);
+                slot = log_get_local_slot(g_ctx.qps[i].buf_copy.log, offset);
                 local_address = slot;
                 // Igor: problem: we can't know ahead of time how big the slot will be
                 // Idea: initially copy a default size (large enough to include the length) and if not enough, copy again
                 req_size = sizeof(log_slot_t) + size;
                 break;
             case MIN_PROPOSAL:
-                local_address = &g_ctx.qps[i].log_copy->minProposal;
-                req_size = sizeof(g_ctx.qps[i].log_copy->minProposal);
+                local_address = &g_ctx.qps[i].buf_copy.log->minProposal;
+                req_size = sizeof(g_ctx.qps[i].buf_copy.log->minProposal);
                 break;
         }   
 
         WRID_SET_CONN(wrid, i);
-        remote_addr = log_get_remote_address(g_ctx.qps[i].log_copy, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
+        remote_addr = log_get_remote_address(g_ctx.qps[i].buf_copy.log, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
         post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_read->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_READ, wrid, true);
     }
 
@@ -717,7 +747,7 @@ copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size) {
         not_ok_slots = 0;
         for (int i = 0; i < g_ctx.num_clients; ++i) {
             if (g_ctx.completed_ops[i] == g_ctx.round_nb) {
-                slot = log_get_local_slot(g_ctx.qps[i].log_copy, offset);
+                slot = log_get_local_slot(g_ctx.qps[i].buf_copy.log, offset);
                 if (slot->accValue.len > correct_sizes[i]) {
                     not_ok_slots++;
                     // increase length
@@ -728,7 +758,7 @@ copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size) {
                     req_size = sizeof(log_slot_t) + slot->accValue.len;
                     correct_sizes[i] = slot->accValue.len; // so that on the next loop iteration, we compare against the right size
                     WRID_SET_CONN(wrid, i);
-                    remote_addr = log_get_remote_address(g_ctx.qps[i].log_copy, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
+                    remote_addr = log_get_remote_address(g_ctx.qps[i].buf_copy.log, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
                     post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_read->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_READ, wrid, true);
                 }
             }
@@ -748,7 +778,7 @@ rdma_write_to_all(log_t* log, uint64_t offset, write_location_t type, bool signa
     switch(type) {
         case SLOT:
             local_address = log_get_local_slot(log, offset);
-            req_size = log_slot_size(g_ctx.log, offset);
+            req_size = log_slot_size(g_ctx.buf.log, offset);
             break;
         case MIN_PROPOSAL:
             local_address = &log->minProposal;
@@ -775,7 +805,7 @@ freshest_accepted_value(uint64_t offset) {
     value_t* freshest_value;
     
     // start with my accepted proposal and value for the given offset
-    log_slot_t* my_slot = log_get_local_slot(g_ctx.log, offset);
+    log_slot_t* my_slot = log_get_local_slot(g_ctx.buf.log, offset);
     max_acc_prop = my_slot->accProposal;
     freshest_value = &my_slot->accValue;
 
@@ -783,7 +813,7 @@ freshest_accepted_value(uint64_t offset) {
     log_slot_t* remote_slot;
     for (int i = 0; i < g_ctx.num_clients; ++i) {
         if (g_ctx.completed_ops[i] == g_ctx.round_nb) {
-            remote_slot = log_get_local_slot(g_ctx.qps[i].log_copy, offset);
+            remote_slot = log_get_local_slot(g_ctx.qps[i].buf_copy.log, offset);
             if (remote_slot->accProposal > max_acc_prop) {
                 max_acc_prop = remote_slot->accProposal;
                 freshest_value = &remote_slot->accValue;

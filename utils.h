@@ -11,6 +11,8 @@
 
 #include <infiniband/verbs.h>
 
+#define SHORT_SLEEP_DURATION 1
+
 
 #include "log.h"
 
@@ -78,7 +80,11 @@ struct qp_context {
     struct ib_connection        local_connection;
     struct ib_connection        remote_connection;
     char                        *servername; // Igor: should we store this per-connection?
-    log_t                       *log_copy;
+    
+    union {
+        log_t *log;
+        counter_t *counter;
+    } buf_copy;
 };
 
 struct global_context {
@@ -95,7 +101,12 @@ struct global_context {
     int                         tx_depth;
     int                         *sockfd;
     char                        *servername;
-    log_t                       *log; 
+    
+    union {
+        log_t *log;
+        counter_t *counter;
+    } buf;
+
     size_t                      len; 
     uint64_t                    *completed_ops;
 };
