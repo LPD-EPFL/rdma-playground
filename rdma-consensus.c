@@ -138,12 +138,13 @@ int main(int argc, char *argv[])
         tcp_server_listen();
     }
 
-    // spawn_leader_election_thread();
+    spawn_leader_election_thread();
 
     TEST_NZ(tcp_exch_ib_connection_info(&g_ctx),
             "Could not exchange connection, tcp_exch_ib_connection");
 
     // Print IB-connection details
+    printf("Consensus thread connections:\n");
     for (int i = 0; i < g_ctx.num_clients; ++i) {
         print_ib_connection("Local  Connection", &g_ctx.qps[i].local_connection);
         print_ib_connection("Remote Connection", &g_ctx.qps[i].remote_connection);    
@@ -271,12 +272,14 @@ leader_election(void* arg) {
     // memset(le_ctx.buf.log,0,log
 
     // use the tcp connections to exchange qp info
-    set_local_ib_connection(&g_ctx, true); // true = leader election thread
+    set_local_ib_connection(&le_ctx, true); // true = leader election thread
 
-    TEST_NZ(tcp_exch_ib_connection_info(&g_ctx),
+
+    TEST_NZ(tcp_exch_ib_connection_info(&le_ctx),
             "Could not exchange connection, tcp_exch_ib_connection");
 
     // Print IB-connection details
+    printf("Leader election connections:\n");
     for (int i = 0; i < le_ctx.num_clients; ++i) {
         print_ib_connection("Local  Connection", &le_ctx.qps[i].local_connection);
         print_ib_connection("Remote Connection", &le_ctx.qps[i].remote_connection);    
@@ -284,12 +287,13 @@ leader_election(void* arg) {
 
 
     // bring the qps to the right states
-    for (int i = 0; i < g_ctx.num_clients; ++i) {
-        qp_change_state_rts(g_ctx.qps[i].qp, i);
+    for (int i = 0; i < le_ctx.num_clients; ++i) {
+        qp_change_state_rts(le_ctx.qps[i].qp, i);
     }
         
     // start the leader election loop
-    while (true) {
+    int i=0;
+    while (i++ < 10) {
         // increment a local counter
         le_ctx.buf.counter->count_cur++;
         // read (RDMA) counters of everyone*
@@ -298,7 +302,11 @@ leader_election(void* arg) {
         decide_leader();
         // communicate the leader to the main thread
         // sleep
-    }   
+        nanosleep((const struct timespec[]){{0, LE_SLEEP_DURATION_NS}}, NULL);
+    }
+
+    destroy_ctx(&le_ctx, true);
+    pthread_exit(NULL);   
 }
 
 static void
@@ -312,7 +320,12 @@ rdma_read_all_counters() {
     le_ctx.round_nb++;
     WRID_SET_SSN(wrid, le_ctx.round_nb);
 
-    // TODO shuffle
+    // shift the counters
+    for (int i = 0; i < le_ctx.num_clients; ++i) {
+        counter_t* counters = le_ctx.qps[i].buf_copy.counter;
+        counters->count_oldest = counters->count_old;
+        counters->count_old = counters->count_cur;
+    }
 
     for (int i = 0; i < le_ctx.num_clients; ++i) {
 
@@ -324,7 +337,7 @@ rdma_read_all_counters() {
         post_send(le_ctx.qps[i].qp, local_address, req_size, le_ctx.qps[i].mr_read->lkey, le_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_READ, wrid, true);
     }
 
-    sleep(SHORT_SLEEP_DURATION);
+    nanosleep((const struct timespec[]){{0, SHORT_SLEEP_DURATION_NS}}, NULL);
 
     struct ibv_wc wc_array[le_ctx.num_clients];
 
@@ -513,6 +526,7 @@ static void init_ctx_common(struct global_context* ctx, bool is_le)
         TEST_Z(ctx->qps[i].mr_write = ibv_reg_mr(ctx->pd, write_buf, ctx->len, 
                         IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE),
                     "Could not allocate mr, ibv_reg_mr. Do you have root access?");
+        printf("MR_WRITE RKEY: %lu, is_le:%d\n", ctx->qps[i].mr_write->rkey, is_le);
         TEST_Z(ctx->qps[i].mr_read = ibv_reg_mr(ctx->pd, read_buf, ctx->len, 
                         IBV_ACCESS_LOCAL_WRITE),
                     "Could not allocate mr, ibv_reg_mr. Do you have root access?");

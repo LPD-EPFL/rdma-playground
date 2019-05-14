@@ -26,6 +26,7 @@ void set_local_ib_connection(struct global_context* ctx, bool is_le){
     for (int i = 0; i < ctx->num_clients; ++i) {
         ctx->qps[i].local_connection.qpn = ctx->qps[i].qp->qp_num;
         ctx->qps[i].local_connection.rkey = ctx->qps[i].mr_write->rkey;
+        printf("set_local_ib_connection: rkey: %lu, is_le:%d\n", ctx->qps[i].local_connection.rkey, is_le);
         ctx->qps[i].local_connection.lid = attr.lid;
         ctx->qps[i].local_connection.psn = lrand48() & 0xffffff;
         if (is_le) {
