@@ -16,7 +16,7 @@ static int sl = 1;
  *      rkey - Remote Key, together with 'vaddr' identifies and grants access to memory region
  *      vaddr - Virtual Address, memory address that peer can later write to
  */
-void set_local_ib_connection(struct global_context* ctx){
+void set_local_ib_connection(struct global_context* ctx, bool is_le){
 
     // First get local lid
     struct ibv_port_attr attr;
@@ -28,7 +28,11 @@ void set_local_ib_connection(struct global_context* ctx){
         ctx->qps[i].local_connection.rkey = ctx->qps[i].mr_write->rkey;
         ctx->qps[i].local_connection.lid = attr.lid;
         ctx->qps[i].local_connection.psn = lrand48() & 0xffffff;
-        ctx->qps[i].local_connection.vaddr = (uintptr_t)ctx->log;
+        if (is_le) {
+            ctx->qps[i].local_connection.vaddr = (uintptr_t)ctx->buf.counter;
+        } else {
+            ctx->qps[i].local_connection.vaddr = (uintptr_t)ctx->buf.log;
+        }
     }
 
 }
@@ -207,7 +211,7 @@ rc_qp_destroy( struct ibv_qp *qp, struct ibv_cq *cq )
  */
 void rdma_write(int id){
 
-    post_send(g_ctx.qps[id].qp, g_ctx.log, log_size(g_ctx.log), g_ctx.qps[id].mr_write->lkey, g_ctx.qps[id].remote_connection.rkey, g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
+    post_send(g_ctx.qps[id].qp, g_ctx.buf.log, log_size(g_ctx.buf.log), g_ctx.qps[id].mr_write->lkey, g_ctx.qps[id].remote_connection.rkey, g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
 
 }    
 

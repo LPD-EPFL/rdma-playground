@@ -74,10 +74,10 @@ static int die(const char *reason);
 static int tcp_client_connect();
 static void tcp_server_listen();
 
-static void init_ctx_common(struct global_context* ctx, bool first_time);
+static void init_ctx_common(struct global_context* ctx, bool is_le);
 static void init_buf_le(struct global_context* ctx);
 static void init_buf_consensus(struct global_context* ctx);
-static void destroy_ctx(struct global_context* ctx);
+static void destroy_ctx(struct global_context* ctx, bool is_le);
 
 static void spawn_leader_election_thread();
 static void* leader_election(void* arg);
@@ -127,10 +127,9 @@ int main(int argc, char *argv[])
     
     page_size = sysconf(_SC_PAGESIZE);
     
-    init_buf_consensus(&g_ctx);
-    init_ctx_common(&g_ctx, true);
+    init_ctx_common(&g_ctx, false); // false = consensus thread
 
-    set_local_ib_connection(&g_ctx);
+    set_local_ib_connection(&g_ctx, false); // false = consensus thread
     
     g_ctx.sockfd = malloc(g_ctx.num_clients * sizeof(g_ctx.sockfd));
     if(g_ctx.servername) { // I am a client
@@ -238,7 +237,7 @@ int main(int argc, char *argv[])
     }
     
     printf("Destroying IB context\n");
-    destroy_ctx(&g_ctx);
+    destroy_ctx(&g_ctx, false);
     
     printf("Closing socket\n");
     for (int i = 0; i < g_ctx.num_clients; ++i) {
@@ -265,15 +264,14 @@ leader_election(void* arg) {
     le_ctx.tx_depth           = g_ctx.tx_depth;
     le_ctx.servername         = g_ctx.servername;
  
-    init_buf_le(&le_ctx);
-    init_ctx_common(&le_ctx, false);
+    init_ctx_common(&le_ctx, true); // true = leader election thread
 
     // we don't need a log structure in the leader election thread
     // for now, zero it out and interpret it as a counter
     // memset(le_ctx.buf.log,0,log
 
     // use the tcp connections to exchange qp info
-    set_local_ib_connection(&g_ctx);
+    set_local_ib_connection(&g_ctx, true); // true = leader election thread
 
     TEST_NZ(tcp_exch_ib_connection_info(&g_ctx),
             "Could not exchange connection, tcp_exch_ib_connection");
@@ -455,18 +453,27 @@ static void init_buf_consensus(struct global_context* ctx) {
  *    This method initializes the Infiniband Context
  *     It creates structures for: ProtectionDomain, MemoryRegion, CompletionChannel, Completion Queues, Queue Pair
  */
-static void init_ctx_common(struct global_context* ctx, bool first_time)
+static void init_ctx_common(struct global_context* ctx, bool is_le)
 {
     
     // TEST_NZ(posix_memalign(&g_ctx.buf, page_size, g_ctx.size * 2),
                 // "could not allocate working buffer g_ctx.buf");
+    void *write_buf;
+    void *read_buf;
 
-    // memset(g_ctx.buf, 0, g_ctx.size * 2);
+    ctx->qps = malloc(ctx->num_clients * sizeof(struct qp_context));
+    memset(ctx->qps, 0, ctx->num_clients * sizeof(struct qp_context));    
+
+    if (is_le) {
+        init_buf_le(ctx);
+    } else {
+        init_buf_consensus(ctx);
+    }
 
     ctx->completed_ops = malloc(ctx->num_clients * sizeof(uint64_t));
     memset(ctx->completed_ops, 0, ctx->num_clients * sizeof(uint64_t));
 
-    if (first_time) {
+    if (ctx->ib_dev == NULL) {
         struct ibv_device **dev_list;
 
         TEST_Z(dev_list = ibv_get_device_list(NULL),
@@ -491,17 +498,22 @@ static void init_ctx_common(struct global_context* ctx, bool first_time)
     TEST_Z(ctx->ch = ibv_create_comp_channel(ctx->context),
             "Could not create completion channel, ibv_create_comp_channel");
 
-    ctx->qps = malloc(ctx->num_clients * sizeof(struct qp_context));
-    memset(ctx->qps, 0, ctx->num_clients * sizeof(struct qp_context));
 
     TEST_Z(ctx->cq = ibv_create_cq(ctx->context,ctx->tx_depth, NULL,  ctx->ch, 0),
                 "Could not create completion queue, ibv_create_cq"); 
 
     for (int i = 0; i < ctx->num_clients; i++) {
-        TEST_Z(ctx->qps[i].mr_write = ibv_reg_mr(ctx->pd, (void*)ctx->buf, ctx->len, 
+        if (is_le) {
+           write_buf = (void*)ctx->buf.counter;
+           read_buf = (void*)ctx->qps[i].buf_copy.counter;
+        } else {
+           write_buf = (void*)ctx->buf.log;
+           read_buf = (void*)ctx->qps[i].buf_copy.log;
+        }
+        TEST_Z(ctx->qps[i].mr_write = ibv_reg_mr(ctx->pd, write_buf, ctx->len, 
                         IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE),
                     "Could not allocate mr, ibv_reg_mr. Do you have root access?");
-        TEST_Z(ctx->qps[i].mr_read = ibv_reg_mr(ctx->pd, (void*)ctx->qps[i].buf_copy, ctx->len, 
+        TEST_Z(ctx->qps[i].mr_read = ibv_reg_mr(ctx->pd, read_buf, ctx->len, 
                         IBV_ACCESS_LOCAL_WRITE),
                     "Could not allocate mr, ibv_reg_mr. Do you have root access?");
 
@@ -525,7 +537,7 @@ static void init_ctx_common(struct global_context* ctx, bool first_time)
     }
 }
 
-static void destroy_ctx(struct global_context* ctx){
+static void destroy_ctx(struct global_context* ctx, bool is_le){
         
     for (int i = 0; i < ctx->num_clients; i++) {
         rc_qp_destroy( ctx->qps[i].qp, ctx->cq );
@@ -542,13 +554,22 @@ static void destroy_ctx(struct global_context* ctx){
                 "Could not de-register memory region, ibv_dereg_mr");
         TEST_NZ(ibv_dereg_mr(ctx->qps[i].mr_read),
                 "Could not de-register memory region, ibv_dereg_mr");
-        log_free(ctx->qps[i].buf_copy.log);
+        
+        if (is_le) {
+            free(ctx->qps[i].buf_copy.counter);
+        } else {
+            log_free(ctx->qps[i].buf_copy.log);
+        }
     }
 
     TEST_NZ(ibv_dealloc_pd(ctx->pd),
             "Could not deallocate protection domain, ibv_dealloc_pd");    
     
-    log_free(ctx->log);
+    if (is_le) {
+        free(ctx->buf.counter);
+    } else {
+        log_free(ctx->buf.log);
+    }
     free(ctx->completed_ops);
     
 }
