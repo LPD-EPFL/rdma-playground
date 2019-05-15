@@ -127,9 +127,9 @@ int main(int argc, char *argv[])
     
     page_size = sysconf(_SC_PAGESIZE);
     
-    init_ctx_common(&g_ctx, false); // false = consensus thread
+    // init_ctx_common(&g_ctx, false); // false = consensus thread
 
-    set_local_ib_connection(&g_ctx, false); // false = consensus thread
+    // set_local_ib_connection(&g_ctx, false); // false = consensus thread
     
     g_ctx.sockfd = malloc(g_ctx.num_clients * sizeof(g_ctx.sockfd));
     if(g_ctx.servername) { // I am a client
@@ -138,30 +138,37 @@ int main(int argc, char *argv[])
         tcp_server_listen();
     }
 
-    spawn_leader_election_thread();
 
-    TEST_NZ(tcp_exch_ib_connection_info(&g_ctx),
-            "Could not exchange connection, tcp_exch_ib_connection");
+    // TEST_NZ(tcp_exch_ib_connection_info(&g_ctx),
+    //         "Could not exchange connection, tcp_exch_ib_connection");
 
     // Print IB-connection details
-    printf("Consensus thread connections:\n");
-    for (int i = 0; i < g_ctx.num_clients; ++i) {
-        print_ib_connection("Local  Connection", &g_ctx.qps[i].local_connection);
-        print_ib_connection("Remote Connection", &g_ctx.qps[i].remote_connection);    
-    }
+    // printf("Consensus thread connections:\n");
+    // for (int i = 0; i < g_ctx.num_clients; ++i) {
+    //     print_ib_connection("Local  Connection", &g_ctx.qps[i].local_connection);
+    //     print_ib_connection("Remote Connection", &g_ctx.qps[i].remote_connection);    
+    // }
+    
+    // spawn_leader_election_thread();
 
-    if(g_ctx.servername){ // I am a client
-        qp_change_state_rtr(g_ctx.qps[0].qp, 0);
-    } else { // I am the server
-        for (int i = 0; i < g_ctx.num_clients; ++i) {
-            qp_change_state_rts(g_ctx.qps[i].qp, i);
-        }
-    }    
+    // if(g_ctx.servername){ // I am a client
+    //     qp_change_state_rtr(g_ctx.qps[0].qp, 0);
+    // } else { // I am the server
+    //     for (int i = 0; i < g_ctx.num_clients; ++i) {
+    //         qp_change_state_rts(g_ctx.qps[i].qp, i);
+    //     }
+    // }   
+
+    leader_election(NULL);
+
+    sleep(100); 
 
     if(!g_ctx.servername){
         /* Server - RDMA WRITE */
 
         printf("Press ENTER to start\n");
+        getchar();
+        printf("Press ENTER again\n");
         getchar();
 
         g_ctx.buf.log->firstUndecidedOffset = 0;
@@ -230,6 +237,8 @@ int main(int argc, char *argv[])
 
         printf("Press ENTER to print log\n");
         getchar();
+        printf("Press ENTER again\n");
+        getchar();
 
         log_print(g_ctx.buf.log);
         
@@ -264,6 +273,7 @@ leader_election(void* arg) {
     le_ctx.ib_port            = g_ctx.ib_port;
     le_ctx.tx_depth           = g_ctx.tx_depth;
     le_ctx.servername         = g_ctx.servername;
+    le_ctx.sockfd             = g_ctx.sockfd;
  
     init_ctx_common(&le_ctx, true); // true = leader election thread
 
@@ -287,9 +297,18 @@ leader_election(void* arg) {
 
 
     // bring the qps to the right states
-    for (int i = 0; i < le_ctx.num_clients; ++i) {
-        qp_change_state_rts(le_ctx.qps[i].qp, i);
-    }
+    // for (int i = 0; i < le_ctx.num_clients; ++i) {
+    //     qp_change_state_rts(le_ctx.qps[i].qp, i);
+    // }
+
+    if(g_ctx.servername){ // I am a client
+        qp_change_state_rtr(&le_ctx);
+    } else { // I am the server
+        qp_change_state_rts(&le_ctx);
+    } 
+
+    printf("Press ENTER to start leader election\n");
+    getchar();
         
     // start the leader election loop
     int i=0;
@@ -297,7 +316,9 @@ leader_election(void* arg) {
         // increment a local counter
         le_ctx.buf.counter->count_cur++;
         // read (RDMA) counters of everyone*
+        printf("Before reading all counters\n");
         rdma_read_all_counters();
+        printf("Finished reading all counters\n");
         // figure out who is leader
         decide_leader();
         // communicate the leader to the main thread
@@ -547,8 +568,8 @@ static void init_ctx_common(struct global_context* ctx, bool is_le)
         TEST_Z(ctx->qps[i].qp = ibv_create_qp(ctx->pd, &qp_init_attr),
                 "Could not create queue pair, ibv_create_qp");    
         
-        qp_change_state_init(ctx->qps[i].qp);        
     }
+    qp_change_state_init(ctx);        
 }
 
 static void destroy_ctx(struct global_context* ctx, bool is_le){

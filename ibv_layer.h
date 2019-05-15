@@ -8,9 +8,9 @@ void print_ib_connection(char *conn_name, struct ib_connection *conn);
 
 int tcp_exch_ib_connection_info();
 
-int qp_change_state_init(struct ibv_qp *qp);
-int qp_change_state_rtr(struct ibv_qp *qp, int id);
-int qp_change_state_rts(struct ibv_qp *qp, int id);
+int qp_change_state_init(struct global_context* ctx);
+int qp_change_state_rtr(struct global_context* ctx);
+int qp_change_state_rts(struct global_context* ctx);
 void rc_qp_destroy( struct ibv_qp *qp, struct ibv_cq *cq );
 
 void rdma_write(int id);
