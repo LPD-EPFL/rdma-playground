@@ -12,7 +12,7 @@
 #include <infiniband/verbs.h>
 
 #define SHORT_SLEEP_DURATION_NS  10*1000 // 10 us = 10 * 1'000 ns
-#define LE_SLEEP_DURATION_NS     100*1000*1000 // 100 ms = 100 * 1'000'000 ns
+#define LE_SLEEP_DURATION_NS     999*1000*1000 // 100 ms = 100 * 1'000'000 ns
 
 
 #include "log.h"

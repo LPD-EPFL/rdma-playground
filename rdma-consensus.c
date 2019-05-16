@@ -127,9 +127,9 @@ int main(int argc, char *argv[])
     
     page_size = sysconf(_SC_PAGESIZE);
     
-    // init_ctx_common(&g_ctx, false); // false = consensus thread
+    init_ctx_common(&g_ctx, false); // false = consensus thread
 
-    // set_local_ib_connection(&g_ctx, false); // false = consensus thread
+    set_local_ib_connection(&g_ctx, false); // false = consensus thread
     
     g_ctx.sockfd = malloc(g_ctx.num_clients * sizeof(g_ctx.sockfd));
     if(g_ctx.servername) { // I am a client
@@ -139,37 +139,31 @@ int main(int argc, char *argv[])
     }
 
 
-    // TEST_NZ(tcp_exch_ib_connection_info(&g_ctx),
-    //         "Could not exchange connection, tcp_exch_ib_connection");
+    TEST_NZ(tcp_exch_ib_connection_info(&g_ctx),
+            "Could not exchange connection, tcp_exch_ib_connection");
 
     // Print IB-connection details
-    // printf("Consensus thread connections:\n");
-    // for (int i = 0; i < g_ctx.num_clients; ++i) {
-    //     print_ib_connection("Local  Connection", &g_ctx.qps[i].local_connection);
-    //     print_ib_connection("Remote Connection", &g_ctx.qps[i].remote_connection);    
-    // }
+    printf("Consensus thread connections:\n");
+    for (int i = 0; i < g_ctx.num_clients; ++i) {
+        print_ib_connection("Local  Connection", &g_ctx.qps[i].local_connection);
+        print_ib_connection("Remote Connection", &g_ctx.qps[i].remote_connection);    
+    }
     
-    // spawn_leader_election_thread();
+    spawn_leader_election_thread();
 
-    // if(g_ctx.servername){ // I am a client
-    //     qp_change_state_rtr(g_ctx.qps[0].qp, 0);
-    // } else { // I am the server
-    //     for (int i = 0; i < g_ctx.num_clients; ++i) {
-    //         qp_change_state_rts(g_ctx.qps[i].qp, i);
-    //     }
-    // }   
+    if(g_ctx.servername){ // I am a client
+        qp_change_state_rtr(&g_ctx);
+    } else { // I am the server
+        qp_change_state_rts(&g_ctx);
+    }   
+        
+    printf("Going to sleep before consensus\n");
+    sleep(5);
 
-    leader_election(NULL);
-
-    sleep(100); 
 
     if(!g_ctx.servername){
         /* Server - RDMA WRITE */
 
-        printf("Press ENTER to start\n");
-        getchar();
-        printf("Press ENTER again\n");
-        getchar();
 
         g_ctx.buf.log->firstUndecidedOffset = 0;
         log_write_local_slot_string(g_ctx.buf.log, g_ctx.buf.log->firstUndecidedOffset, 4, "blablabla");
@@ -235,16 +229,13 @@ int main(int argc, char *argv[])
         // }
 
 
-        printf("Press ENTER to print log\n");
-        getchar();
-        printf("Press ENTER again\n");
-        getchar();
 
         log_print(g_ctx.buf.log);
         
-        printf("Press ENTER to exit\n");
-        getchar();
     }
+
+    printf("Going to sleep after consensus\n");
+    sleep(15);
     
     printf("Destroying IB context\n");
     destroy_ctx(&g_ctx, false);
@@ -301,14 +292,11 @@ leader_election(void* arg) {
     //     qp_change_state_rts(le_ctx.qps[i].qp, i);
     // }
 
-    if(g_ctx.servername){ // I am a client
-        qp_change_state_rtr(&le_ctx);
-    } else { // I am the server
-        qp_change_state_rts(&le_ctx);
-    } 
 
-    printf("Press ENTER to start leader election\n");
-    getchar();
+    qp_change_state_rts(&le_ctx);
+
+    printf("Going to sleep le\n");
+    sleep(5);
         
     // start the leader election loop
     int i=0;
@@ -316,9 +304,7 @@ leader_election(void* arg) {
         // increment a local counter
         le_ctx.buf.counter->count_cur++;
         // read (RDMA) counters of everyone*
-        printf("Before reading all counters\n");
         rdma_read_all_counters();
-        printf("Finished reading all counters\n");
         // figure out who is leader
         decide_leader();
         // communicate the leader to the main thread
@@ -466,9 +452,11 @@ static void tcp_server_listen() {
 
 static void init_buf_le(struct global_context* ctx) {
     le_ctx.buf.counter = malloc(sizeof(counter_t));
+    memset(le_ctx.buf.counter, 0, sizeof(counter_t));
     le_ctx.len = sizeof(counter_t);
     for (int i = 0; i < ctx->num_clients; i++) {
         ctx->qps[i].buf_copy.counter = malloc(sizeof(counter_t));
+        memset(ctx->qps[i].buf_copy.counter, 0, sizeof(counter_t));
     }
 }
 
@@ -547,7 +535,6 @@ static void init_ctx_common(struct global_context* ctx, bool is_le)
         TEST_Z(ctx->qps[i].mr_write = ibv_reg_mr(ctx->pd, write_buf, ctx->len, 
                         IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE),
                     "Could not allocate mr, ibv_reg_mr. Do you have root access?");
-        printf("MR_WRITE RKEY: %lu, is_le:%d\n", ctx->qps[i].mr_write->rkey, is_le);
         TEST_Z(ctx->qps[i].mr_read = ibv_reg_mr(ctx->pd, read_buf, ctx->len, 
                         IBV_ACCESS_LOCAL_WRITE),
                     "Could not allocate mr, ibv_reg_mr. Do you have root access?");
