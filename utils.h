@@ -81,6 +81,7 @@ struct qp_context {
     struct ib_connection        local_connection;
     struct ib_connection        remote_connection;
     char                        *servername; // Igor: should we store this per-connection?
+    int                         id;
     
     union {
         log_t *log;

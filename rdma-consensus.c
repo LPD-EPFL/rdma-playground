@@ -14,6 +14,9 @@
 #include <unistd.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include <netdb.h>
 #include <pthread.h>
@@ -389,6 +392,18 @@ static int tcp_client_connect()
     char *service;
     int sockfd = -1;
 
+
+    int n;
+    TEST_N(n = getaddrinfo(NULL, service, &hints, &res),
+            "getaddrinfo threw error");
+
+    struct sockaddr_in* aux;
+    aux = (struct sockaddr_in *)res->ai_addr;
+    printf("My address is %s\n", inet_ntoa(aux->sin_addr));
+
+    struct sockaddr_in * clientaddr;
+    socklen_t clientlen = sizeof(clientaddr);
+
     TEST_N(asprintf(&service, "%d", g_ctx.port),
             "Error writing port-number to port-string");
 
@@ -396,6 +411,10 @@ static int tcp_client_connect()
             "getaddrinfo threw error");
 
     for(t = res; t; t = t->ai_next){
+        clientaddr = (struct sockaddr_in *)t->ai_addr;
+
+        printf("Server address is %s\n", inet_ntoa(clientaddr->sin_addr));
+
         TEST_N(sockfd = socket(t->ai_family, t->ai_socktype, t->ai_protocol),
                 "Could not create client socket");
 
@@ -424,12 +443,18 @@ static void tcp_server_listen() {
     char *service;
     int sockfd = -1;
     int n;
+    struct sockaddr_in clientaddr;
+    socklen_t clientlen = sizeof(clientaddr);
 
     TEST_N(asprintf(&service, "%d", g_ctx.port),
             "Error writing port-number to port-string");
 
     TEST_N(n = getaddrinfo(NULL, service, &hints, &res),
             "getaddrinfo threw error");
+
+    struct sockaddr_in* aux;
+    aux = (struct sockaddr_in *)res->ai_addr;
+    printf("My address is %s\n", inet_ntoa(aux->sin_addr));
 
     TEST_N(sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol),
                 "Could not create server socket");
@@ -442,8 +467,9 @@ static void tcp_server_listen() {
     listen(sockfd, 1);
 
     for (int i = 0; i < g_ctx.num_clients; ++i) {
-        TEST_N(g_ctx.sockfd[i] = accept(sockfd, NULL, 0),
+        TEST_N(g_ctx.sockfd[i] = accept(sockfd, (struct sockaddr *)&clientaddr, &clientlen),
             "server accept failed");
+        printf("Client address is %s\n", inet_ntoa(clientaddr.sin_addr));
     }
 
     freeaddrinfo(res);
