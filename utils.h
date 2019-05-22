@@ -5,9 +5,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <errno.h>
+
+
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <ifaddrs.h>
+#include <linux/if_link.h>
+#include <netinet/in.h>
+
 
 #include <infiniband/verbs.h>
 
@@ -25,6 +34,9 @@
 
 // if x is NEGATIVE, error is printed
 #define TEST_N(x,y) do { if ((x)<0) die(y); } while (0)
+
+// if x is NULL, error is printed
+#define TEST_NULL(x,y) do { if ((x)==NULL) die(y); } while (0)
 
 /**
  * The WR Identifier (WRID)
@@ -81,7 +93,7 @@ struct qp_context {
     struct ib_connection        local_connection;
     struct ib_connection        remote_connection;
     char                        *servername; // Igor: should we store this per-connection?
-    int                         id;
+    char                        ip_address[NI_MAXHOST];
     
     union {
         log_t *log;
@@ -103,6 +115,7 @@ struct global_context {
     int                         tx_depth;
     int                         *sockfd;
     char                        *servername;
+    char                        my_ip_address[NI_MAXHOST];
     
     union {
         log_t *log;

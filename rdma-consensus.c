@@ -8,17 +8,7 @@
 #define _GNU_SOURCE 1
 #endif
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <errno.h>
-#include <stdbool.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 
-#include <netdb.h>
 #include <pthread.h>
 
 #include <infiniband/verbs.h>
@@ -76,6 +66,8 @@ static int die(const char *reason);
 
 static int tcp_client_connect();
 static void tcp_server_listen();
+static void parse_config(char* filename, struct global_context *ctx);
+static bool compare_to_self(struct ifaddrs *ifaddr, char *addr);
 
 static void init_ctx_common(struct global_context* ctx, bool is_le);
 static void init_buf_le(struct global_context* ctx);
@@ -104,20 +96,21 @@ static bool min_proposal_ok(uint64_t propNr);
 int main(int argc, char *argv[])
 {
 
-    if(argc == 2){
-        g_ctx.num_clients = atoi(argv[1]);
-        if (g_ctx.num_clients == 0) {
-            g_ctx.num_clients = 1;
-            g_ctx.servername = argv[1];
-            printf("I am a client. The server is %s\n", g_ctx.servername);
-        } else {
-            printf("I am a server. I expect %d clients\n", g_ctx.num_clients);
-        }
-    } else { // (argc != 2)
-        die("*Error* Usage: rdma <server/nb_clients>\n");
-    }
+    // if(argc == 2){
+    //     g_ctx.num_clients = atoi(argv[1]);
+    //     if (g_ctx.num_clients == 0) {
+    //         g_ctx.num_clients = 1;
+    //         g_ctx.servername = argv[1];
+    //         printf("I am a client. The server is %s\n", g_ctx.servername);
+    //     } else {
+    //         printf("I am a server. I expect %d clients\n", g_ctx.num_clients);
+    //     }
+    // } else { // (argc != 2)
+    //     die("*Error* Usage: rdma <server/nb_clients>\n");
+    // }
 
     pid = getpid();
+
 
     if(!g_ctx.servername){
         // Print app parameters. This is basically from rdma_bw app. Most of them are not used atm
@@ -131,6 +124,7 @@ int main(int argc, char *argv[])
     page_size = sysconf(_SC_PAGESIZE);
     
     init_ctx_common(&g_ctx, false); // false = consensus thread
+    parse_config(argv[1], &g_ctx);
 
     set_local_ib_connection(&g_ctx, false); // false = consensus thread
     
@@ -268,6 +262,8 @@ leader_election(void* arg) {
     le_ctx.tx_depth           = g_ctx.tx_depth;
     le_ctx.servername         = g_ctx.servername;
     le_ctx.sockfd             = g_ctx.sockfd;
+
+    // TODO inherit ids
  
     init_ctx_common(&le_ctx, true); // true = leader election thread
 
@@ -374,6 +370,85 @@ decide_leader() {
     }
 
     // return myself no smaller id incremented their counter
+}
+
+
+static void parse_config(char* filename, struct global_context *ctx) {
+    struct ifaddrs *ifaddr;
+    
+
+    TEST_NZ(getifaddrs(&ifaddr), "getifaddrs");
+
+    /* Walk through linked list, maintaining head pointer so we
+      can free list later */
+
+
+    FILE * fp;
+    char * line = malloc(NI_MAXHOST * sizeof(char));
+    size_t len = NI_MAXHOST * sizeof(char);
+    ssize_t read;
+
+    TEST_NULL(fp = fopen(filename, "r"), "open config file failure");
+
+    int i = 0;
+    while ((read = getline(&line, &len, fp)) != -1) {
+        // strip the newline from the end of line
+        if (line[read - 1] == '\n') {
+            line[read - 1] = '\0';
+            --read;
+        }
+        if (compare_to_self(ifaddr, line)) {
+            printf("My id is %s\n", line);
+            // strcpy(ctx->my_ip_address, line);
+        } else {
+            printf("The id of %d is %s\n", i, line);
+            // strcpy(ctx->qps[i].ip_address, line);
+            i++;
+        }
+    }
+
+    fclose(fp);
+    if (line)
+        free(line);
+
+    freeifaddrs(ifaddr);
+
+    // read the configuration file
+    // for each line in the configuration file
+    //  check if the ip address in this line is mine
+    //  if yes, my id = the number of the current line
+    //  else, id[next available qp_context] = the number of the current line
+}
+
+static bool
+compare_to_self(struct ifaddrs *ifaddr, char *addr) {
+    struct ifaddrs *ifa;
+    int family;
+    char host[NI_MAXHOST];
+
+    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == NULL)
+            continue;
+
+        family = ifa->ifa_addr->sa_family;
+
+        /* For an AF_INET* interface address, display the address */
+
+        if (family == AF_INET) {
+            TEST_NZ(getnameinfo(ifa->ifa_addr,
+                   sizeof(struct sockaddr_in),
+                   host, NI_MAXHOST,
+                   NULL, 0, NI_NUMERICHOST),
+                   "getnameinfo() failed");
+
+            printf("Comparing %s and %s = %d\n", host, addr, strcmp(host, addr));
+            if (0 == strcmp(host, addr)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 /*
