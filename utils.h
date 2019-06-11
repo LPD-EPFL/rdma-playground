@@ -116,6 +116,7 @@ struct global_context {
     int                         *sockfd;
     char                        *servername;
     char                        my_ip_address[NI_MAXHOST];
+    int                         my_index; // my_index = i iff my_ip_address is the i-th in the config file
     
     union {
         log_t *log;

@@ -22,6 +22,7 @@
 static int page_size;
 static int sl = 1;
 static pid_t pid;
+static char* config_file;
 
 struct global_context g_ctx = {
     .ib_dev             = NULL,
@@ -124,11 +125,18 @@ int main(int argc, char *argv[])
     page_size = sysconf(_SC_PAGESIZE);
     
     init_ctx_common(&g_ctx, false); // false = consensus thread
-    parse_config(argv[1], &g_ctx);
+
+    config_file = argv[1];
+    parse_config(config_file, &g_ctx);
 
     set_local_ib_connection(&g_ctx, false); // false = consensus thread
     
     g_ctx.sockfd = malloc(g_ctx.num_clients * sizeof(g_ctx.sockfd));
+
+    tcp_server_listen();
+    // TODO maybe sleep here
+    tcp_client_connect();
+
     if(g_ctx.servername) { // I am a client
         g_ctx.sockfd[0] = tcp_client_connect();
     } else { // I am the server
@@ -263,9 +271,10 @@ leader_election(void* arg) {
     le_ctx.servername         = g_ctx.servername;
     le_ctx.sockfd             = g_ctx.sockfd;
 
-    // TODO inherit ids
- 
+
     init_ctx_common(&le_ctx, true); // true = leader election thread
+
+    parse_config(config_file, &le_ctx);
 
     // we don't need a log structure in the leader election thread
     // for now, zero it out and interpret it as a counter
@@ -399,10 +408,11 @@ static void parse_config(char* filename, struct global_context *ctx) {
         }
         if (compare_to_self(ifaddr, line)) {
             printf("My id is %s\n", line);
-            // strcpy(ctx->my_ip_address, line);
+            strcpy(ctx->my_ip_address, line);
+            ctx->my_index = i;
         } else {
             printf("The id of %d is %s\n", i, line);
-            // strcpy(ctx->qps[i].ip_address, line);
+            strcpy(ctx->qps[i].ip_address, line);
             i++;
         }
     }
@@ -517,6 +527,7 @@ static void tcp_server_listen() {
 
     char *service;
     int sockfd = -1;
+    int accepted_socket;
     int n;
     struct sockaddr_in clientaddr;
     socklen_t clientlen = sizeof(clientaddr);
@@ -527,9 +538,6 @@ static void tcp_server_listen() {
     TEST_N(n = getaddrinfo(NULL, service, &hints, &res),
             "getaddrinfo threw error");
 
-    struct sockaddr_in* aux;
-    aux = (struct sockaddr_in *)res->ai_addr;
-    printf("My address is %s\n", inet_ntoa(aux->sin_addr));
 
     TEST_N(sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol),
                 "Could not create server socket");
@@ -541,10 +549,18 @@ static void tcp_server_listen() {
     
     listen(sockfd, 1);
 
-    for (int i = 0; i < g_ctx.num_clients; ++i) {
-        TEST_N(g_ctx.sockfd[i] = accept(sockfd, (struct sockaddr *)&clientaddr, &clientlen),
+    for (int i = g_ctx.my_index; i < g_ctx.num_clients; ++i) {
+
+        TEST_N(accepted_socket = accept(sockfd, (struct sockaddr *)&clientaddr, &clientlen),
             "server accept failed");
-        printf("Client address is %s\n", inet_ntoa(clientaddr.sin_addr));
+        char* client_ip_addr = inet_ntoa(clientaddr.sin_addr);
+
+        for (int j = g_ctx.my_index; j < g_ctx.num_clients; ++j) {
+            if (strcmp(client_ip_addr, g_ctx.my_ip_address) == 0) {
+                g_ctx.sockfd[j] = accepted_socket;
+                printf("Client address is %s and its index is %d\n", inet_ntoa(clientaddr.sin_addr), j);
+            }
+        }
     }
 
     freeaddrinfo(res);
