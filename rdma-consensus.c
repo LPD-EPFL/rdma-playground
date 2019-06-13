@@ -65,8 +65,9 @@ typedef enum {SLOT, MIN_PROPOSAL} write_location_t;
 
 static int die(const char *reason);
 
-static int tcp_client_connect();
+static void tcp_client_connect();
 static void tcp_server_listen();
+static void count_lines(char* filename, struct global_context *ctx);
 static void parse_config(char* filename, struct global_context *ctx);
 static bool compare_to_self(struct ifaddrs *ifaddr, char *addr);
 
@@ -123,25 +124,34 @@ int main(int argc, char *argv[])
     srand48(pid * time(NULL));
     
     page_size = sysconf(_SC_PAGESIZE);
+
+    config_file = argv[1];
+    count_lines(config_file, &g_ctx);
     
     init_ctx_common(&g_ctx, false); // false = consensus thread
 
-    config_file = argv[1];
     parse_config(config_file, &g_ctx);
+
+    printf("Current ip addresses before set local ib connection %s %s\n", g_ctx.qps[0].ip_address, g_ctx.qps[1].ip_address);
 
     set_local_ib_connection(&g_ctx, false); // false = consensus thread
     
     g_ctx.sockfd = malloc(g_ctx.num_clients * sizeof(g_ctx.sockfd));
 
+    printf("Current ip addresses before server listen %s %s\n", g_ctx.qps[0].ip_address, g_ctx.qps[1].ip_address);
+
     tcp_server_listen();
+
+    printf("Current ip addresses after server listen %s %s\n", g_ctx.qps[0].ip_address, g_ctx.qps[1].ip_address);
+
     // TODO maybe sleep here
     tcp_client_connect();
 
-    if(g_ctx.servername) { // I am a client
-        g_ctx.sockfd[0] = tcp_client_connect();
-    } else { // I am the server
-        tcp_server_listen();
-    }
+    // if(g_ctx.servername) { // I am a client
+    //     g_ctx.sockfd[0] = tcp_client_connect();
+    // } else { // I am the server
+    //     tcp_server_listen();
+    // }
 
 
     TEST_NZ(tcp_exch_ib_connection_info(&g_ctx),
@@ -382,6 +392,36 @@ decide_leader() {
 }
 
 
+static void count_lines(char* filename, struct global_context *ctx) {
+    
+
+
+    FILE * fp;
+    char * line = malloc(NI_MAXHOST * sizeof(char));
+    size_t len = NI_MAXHOST * sizeof(char);
+    ssize_t read;
+
+    TEST_NULL(fp = fopen(filename, "r"), "open config file failure");
+
+    int i = 0;
+    while ((read = getline(&line, &len, fp)) != -1) {
+        i++;
+    }
+
+    ctx->num_clients = i-1;
+
+    fclose(fp);
+    if (line)
+        free(line);
+
+
+    // read the configuration file
+    // for each line in the configuration file
+    //  check if the ip address in this line is mine
+    //  if yes, my id = the number of the current line
+    //  else, id[next available qp_context] = the number of the current line
+}
+
 static void parse_config(char* filename, struct global_context *ctx) {
     struct ifaddrs *ifaddr;
     
@@ -411,8 +451,8 @@ static void parse_config(char* filename, struct global_context *ctx) {
             strcpy(ctx->my_ip_address, line);
             ctx->my_index = i;
         } else {
-            printf("The id of %d is %s\n", i, line);
             strcpy(ctx->qps[i].ip_address, line);
+            printf("The id of %d is %s\n", i, ctx->qps[i].ip_address);
             i++;
         }
     }
@@ -466,7 +506,7 @@ compare_to_self(struct ifaddrs *ifaddr, char *addr) {
  * ********************
  *    Creates a connection to a TCP server 
  */
-static int tcp_client_connect()
+static void tcp_client_connect()
 {
     struct addrinfo *res, *t;
     struct addrinfo hints = {
@@ -475,41 +515,46 @@ static int tcp_client_connect()
     };
 
     char *service;
-    int sockfd = -1;
+    // int sockfd = -1;
 
 
-    int n;
-    TEST_N(n = getaddrinfo(NULL, service, &hints, &res),
-            "getaddrinfo threw error");
+    // int n;
+    // TEST_N(n = getaddrinfo(NULL, service, &hints, &res),
+    //         "getaddrinfo threw error");
 
-    struct sockaddr_in* aux;
-    aux = (struct sockaddr_in *)res->ai_addr;
-    printf("My address is %s\n", inet_ntoa(aux->sin_addr));
+    // struct sockaddr_in* aux;
+    // aux = (struct sockaddr_in *)res->ai_addr;
+    // printf("My address is %s\n", inet_ntoa(aux->sin_addr));
 
-    struct sockaddr_in * clientaddr;
-    socklen_t clientlen = sizeof(clientaddr);
+    // struct sockaddr_in * clientaddr;
+    // socklen_t clientlen = sizeof(clientaddr);
 
+    
     TEST_N(asprintf(&service, "%d", g_ctx.port),
             "Error writing port-number to port-string");
 
-    TEST_N(getaddrinfo(g_ctx.servername, service, &hints, &res),
-            "getaddrinfo threw error");
+    for (int i = 0; i < g_ctx.my_index; ++i) {
 
-    for(t = res; t; t = t->ai_next){
-        clientaddr = (struct sockaddr_in *)t->ai_addr;
+        printf("Current ip addresses before %s %s\n", g_ctx.qps[0].ip_address, g_ctx.qps[1].ip_address);
+        TEST_N(getaddrinfo(g_ctx.qps[i].ip_address, service, &hints, &res),
+                "getaddrinfo threw error");
+        printf("Current ip addresses after %s %s\n", g_ctx.qps[0].ip_address, g_ctx.qps[1].ip_address);
 
-        printf("Server address is %s\n", inet_ntoa(clientaddr->sin_addr));
+        for(t = res; t; t = t->ai_next){
+            // clientaddr = (struct sockaddr_in *)t->ai_addr;
 
-        TEST_N(sockfd = socket(t->ai_family, t->ai_socktype, t->ai_protocol),
-                "Could not create client socket");
+            // printf("Server address is %s\n", inet_ntoa(clientaddr->sin_addr));
 
-        TEST_N(connect(sockfd,t->ai_addr, t->ai_addrlen),
-                "Could not connect to server");    
+            TEST_N(g_ctx.sockfd[i] = socket(t->ai_family, t->ai_socktype, t->ai_protocol),
+                    "Could not create client socket");
+
+            TEST_N(connect(g_ctx.sockfd[i], t->ai_addr, t->ai_addrlen),
+                    "Could not connect to server");    
+        }
+
     }
     
     freeaddrinfo(res);
-    
-    return sockfd;
 }
 
 /*
@@ -535,8 +580,14 @@ static void tcp_server_listen() {
     TEST_N(asprintf(&service, "%d", g_ctx.port),
             "Error writing port-number to port-string");
 
+    printf("Current ip addresses before getaddrinfo in listen %s %s\n", g_ctx.qps[0].ip_address, g_ctx.qps[1].ip_address);
+
+
     TEST_N(n = getaddrinfo(NULL, service, &hints, &res),
             "getaddrinfo threw error");
+
+    printf("Current ip addresses after getaddrinfo in listen %s %s\n", g_ctx.qps[0].ip_address, g_ctx.qps[1].ip_address);
+    printf("Some more prints %s\n", g_ctx.qps[1]);
 
 
     TEST_N(sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol),
@@ -549,6 +600,9 @@ static void tcp_server_listen() {
     
     listen(sockfd, 1);
 
+    printf("Current ip addresses after started listening %s %s\n", g_ctx.qps[0].ip_address, g_ctx.qps[1].ip_address);
+
+
     for (int i = g_ctx.my_index; i < g_ctx.num_clients; ++i) {
 
         TEST_N(accepted_socket = accept(sockfd, (struct sockaddr *)&clientaddr, &clientlen),
@@ -556,9 +610,10 @@ static void tcp_server_listen() {
         char* client_ip_addr = inet_ntoa(clientaddr.sin_addr);
 
         for (int j = g_ctx.my_index; j < g_ctx.num_clients; ++j) {
-            if (strcmp(client_ip_addr, g_ctx.my_ip_address) == 0) {
+            if (strcmp(client_ip_addr, g_ctx.qps[j].ip_address) == 0) {
                 g_ctx.sockfd[j] = accepted_socket;
                 printf("Client address is %s and its index is %d\n", inet_ntoa(clientaddr.sin_addr), j);
+                break;
             }
         }
     }
