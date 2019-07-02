@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <errno.h>
+#include <stdatomic.h>
 
 
 #include <arpa/inet.h>

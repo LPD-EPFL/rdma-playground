@@ -23,6 +23,7 @@ static int page_size;
 static int sl = 1;
 static pid_t pid;
 static char* config_file;
+static atomic_int leader = 0;
 
 struct global_context g_ctx = {
     .ib_dev             = NULL,
@@ -79,7 +80,7 @@ static void destroy_ctx(struct global_context* ctx, bool is_le);
 static void spawn_leader_election_thread();
 static void* leader_election(void* arg);
 static void rdma_read_all_counters();
-static void decide_leader();
+static int decide_leader();
 
 
 static void outer_loop(log_t *log);
@@ -138,20 +139,10 @@ int main(int argc, char *argv[])
     
     g_ctx.sockfd = malloc(g_ctx.num_clients * sizeof(g_ctx.sockfd));
 
-    printf("Current ip addresses before server listen %s %s\n", g_ctx.qps[0].ip_address, g_ctx.qps[1].ip_address);
-
     tcp_server_listen();
-
-    printf("Current ip addresses after server listen %s %s\n", g_ctx.qps[0].ip_address, g_ctx.qps[1].ip_address);
 
     // TODO maybe sleep here
     tcp_client_connect();
-
-    // if(g_ctx.servername) { // I am a client
-    //     g_ctx.sockfd[0] = tcp_client_connect();
-    // } else { // I am the server
-    //     tcp_server_listen();
-    // }
 
 
     TEST_NZ(tcp_exch_ib_connection_info(&g_ctx),
@@ -173,11 +164,10 @@ int main(int argc, char *argv[])
     }   
         
     printf("Going to sleep before consensus\n");
-    sleep(5);
+    sleep(15);
 
 
-    if(!g_ctx.servername){
-        /* Server - RDMA WRITE */
+    if(leader == g_ctx.my_index){
 
 
         g_ctx.buf.log->firstUndecidedOffset = 0;
@@ -232,7 +222,7 @@ int main(int argc, char *argv[])
         // ibv_rereg_mr(g_ctx.mr[0], IBV_REREG_MR_CHANGE_ACCESS, g_ctx.pd, g_ctx.buf, g_ctx.size * 2, IBV_ACCESS_LOCAL_WRITE);
         // ibv_rereg_mr(g_ctx.mr[1], IBV_REREG_MR_CHANGE_ACCESS, g_ctx.pd, g_ctx.buf, g_ctx.size * 2, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
        
-
+        sleep(3);
         printf("Client. Reading Local-Buffer (Buffer that was registered with MR)\n");
         
         // char *chPtr = (char *)g_ctx.qps[0].local_connection.vaddr;
@@ -324,8 +314,9 @@ leader_election(void* arg) {
         // read (RDMA) counters of everyone*
         rdma_read_all_counters();
         // figure out who is leader
-        decide_leader();
-        // communicate the leader to the main thread
+        // and communicate the leader to the main thread
+        leader = decide_leader();
+
         // sleep
         nanosleep((const struct timespec[]){{0, LE_SLEEP_DURATION_NS}}, NULL);
     }
@@ -370,25 +361,29 @@ rdma_read_all_counters() {
 
 }
 
-// TODO need to fix ids / names first
-static void
+static int
 decide_leader() {
-    for (int i = 0; i < le_ctx.num_clients; ++i) {
+    for (int i = 0; i < le_ctx.my_index; ++i) {
 
         counter_t* counters = le_ctx.qps[i].buf_copy.counter;
-        if (counters->count_old != counters->count_oldest) {
+        if (counters->count_old != counters->count_oldest) { // this node has moved
             // return i;
-            printf("Node %d is a valid leader\n", i);
+            printf("Node %d is my leader\n", i);
+            return i;
         }
         
+        // if there is no concurrent read of the counters in progress, look at the most recent read counter as well
         if (le_ctx.completed_ops[i] == le_ctx.round_nb) {
             if (counters->count_cur != counters->count_old) {
-                printf("Node %d is a valid leader\n", i);
+                printf("Node %d is my leader\n", i);
+                return i;
             }
         }
     }
 
-    // return myself no smaller id incremented their counter
+    // return myself (no smaller id incremented their counter)
+    printf("I am the leader\n");
+    return le_ctx.my_index;
 }
 
 
@@ -491,7 +486,6 @@ compare_to_self(struct ifaddrs *ifaddr, char *addr) {
                    NULL, 0, NI_NUMERICHOST),
                    "getnameinfo() failed");
 
-            printf("Comparing %s and %s = %d\n", host, addr, strcmp(host, addr));
             if (0 == strcmp(host, addr)) {
                 return true;
             }
@@ -535,10 +529,8 @@ static void tcp_client_connect()
 
     for (int i = 0; i < g_ctx.my_index; ++i) {
 
-        printf("Current ip addresses before %s %s\n", g_ctx.qps[0].ip_address, g_ctx.qps[1].ip_address);
         TEST_N(getaddrinfo(g_ctx.qps[i].ip_address, service, &hints, &res),
                 "getaddrinfo threw error");
-        printf("Current ip addresses after %s %s\n", g_ctx.qps[0].ip_address, g_ctx.qps[1].ip_address);
 
         for(t = res; t; t = t->ai_next){
             // clientaddr = (struct sockaddr_in *)t->ai_addr;
@@ -580,14 +572,9 @@ static void tcp_server_listen() {
     TEST_N(asprintf(&service, "%d", g_ctx.port),
             "Error writing port-number to port-string");
 
-    printf("Current ip addresses before getaddrinfo in listen %s %s\n", g_ctx.qps[0].ip_address, g_ctx.qps[1].ip_address);
-
 
     TEST_N(n = getaddrinfo(NULL, service, &hints, &res),
             "getaddrinfo threw error");
-
-    printf("Current ip addresses after getaddrinfo in listen %s %s\n", g_ctx.qps[0].ip_address, g_ctx.qps[1].ip_address);
-    printf("Some more prints %s\n", g_ctx.qps[1]);
 
 
     TEST_N(sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol),
@@ -599,8 +586,6 @@ static void tcp_server_listen() {
             "Could not bind addr to socket"); 
     
     listen(sockfd, 1);
-
-    printf("Current ip addresses after started listening %s %s\n", g_ctx.qps[0].ip_address, g_ctx.qps[1].ip_address);
 
 
     for (int i = g_ctx.my_index; i < g_ctx.num_clients; ++i) {
@@ -776,6 +761,9 @@ outer_loop(log_t *log) {
     uint64_t propNr;
     // while (true) {
         // wait until I am leader
+        while (leader != g_ctx.my_index) {
+            nanosleep((const struct timespec[]){{0, SHORT_SLEEP_DURATION_NS}}, NULL);
+        }
         // get permissions
         // bring followers up to date with me
         update_followers();
