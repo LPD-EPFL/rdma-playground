@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <errno.h>
 #include <stdatomic.h>
+#include <pthread.h>
 
 
 #include <arpa/inet.h>
@@ -18,14 +19,16 @@
 #include <linux/if_link.h>
 #include <netinet/in.h>
 
-
 #include <infiniband/verbs.h>
+
+#include "log.h"
 
 #define SHORT_SLEEP_DURATION_NS  10*1000 // 10 us = 10 * 1'000 ns
 #define LE_SLEEP_DURATION_NS     999*1000*1000 // 100 ms = 100 * 1'000'000 ns
 
+typedef enum {SLOT, MIN_PROPOSAL} write_location_t;
 
-#include "log.h"
+
 
 // if x is NON-ZERO, error is printed
 #define TEST_NZ(x,y) do { if ((x)) die(y); } while (0)

@@ -1,396 +1,12 @@
 // Based on rdma_bw.c program
 
-#if HAVE_CONFIG_H
-#  include <config.h>
-#endif /* HAVE_CONFIG_H */
+#include "rdma-consensus.h"
 
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE 1
-#endif
+extern struct global_context g_ctx;
+extern struct global_context le_ctx;
 
-
-#include <pthread.h>
-
-#include <infiniband/verbs.h>
-#include "log.h"
-#include "ibv_layer.h"
-#include "utils.h"
-
-#define RDMA_WRID 3
-#define SHORT_SLEEP_DURATION 1
-
-static int page_size;
-static int sl = 1;
-static pid_t pid;
-static char* config_file;
-static atomic_int leader = 0;
-
-struct global_context g_ctx = {
-    .ib_dev             = NULL,
-    .context            = NULL,
-    .pd                 = NULL,
-    .cq                 = NULL,
-    .ch                 = NULL,
-    .qps                = NULL,
-    .round_nb           = 0,
-    .num_clients        = 0,
-    .port               = 18515,
-    .ib_port            = 1,
-    .tx_depth           = 100,
-    .servername         = NULL,
-    .buf.log            = NULL,
-    .len                = 0,
-    .completed_ops      = NULL
-};
-
-struct global_context le_ctx = {
-    .ib_dev             = NULL,
-    .context            = NULL,
-    .pd                 = NULL,
-    .cq                 = NULL,
-    .ch                 = NULL,
-    .qps                = NULL,
-    .round_nb           = 0,
-    .num_clients        = 0,
-    .port               = 18515,
-    .ib_port            = 1,
-    .tx_depth           = 100,
-    .servername         = NULL,
-    .buf.counter        = NULL,
-    .len                = 0,
-    .completed_ops      = NULL
-};
-
-typedef enum {SLOT, MIN_PROPOSAL} write_location_t;
-
-
-static int die(const char *reason);
-
-static void tcp_client_connect();
-static void tcp_server_listen();
-static void count_lines(char* filename, struct global_context *ctx);
-static void parse_config(char* filename, struct global_context *ctx);
-static bool compare_to_self(struct ifaddrs *ifaddr, char *addr);
-
-static void init_ctx_common(struct global_context* ctx, bool is_le);
-static void init_buf_le(struct global_context* ctx);
-static void init_buf_consensus(struct global_context* ctx);
-static void destroy_ctx(struct global_context* ctx, bool is_le);
-
-static void spawn_leader_election_thread();
-static void* leader_election(void* arg);
-static void rdma_read_all_counters();
-static int decide_leader();
-
-
-static void outer_loop(log_t *log);
-static void inner_loop(log_t *log, uint64_t propNr);
-static int write_log_slot(log_t* log, uint64_t offset, uint64_t propNr, value_t* value);
-static int write_min_proposal(log_t* log, uint64_t propNr);
-static int read_min_proposals();
-static int copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size);
-static void update_followers();
-static value_t* freshest_accepted_value(uint64_t offset);
-static void wait_for_majority();
-static void wait_for_all(); 
-static void rdma_write_to_all(log_t* log, uint64_t offset, write_location_t type, bool signaled);
-static bool min_proposal_ok(uint64_t propNr);
-
-int main(int argc, char *argv[])
-{
-
-    // if(argc == 2){
-    //     g_ctx.num_clients = atoi(argv[1]);
-    //     if (g_ctx.num_clients == 0) {
-    //         g_ctx.num_clients = 1;
-    //         g_ctx.servername = argv[1];
-    //         printf("I am a client. The server is %s\n", g_ctx.servername);
-    //     } else {
-    //         printf("I am a server. I expect %d clients\n", g_ctx.num_clients);
-    //     }
-    // } else { // (argc != 2)
-    //     die("*Error* Usage: rdma <server/nb_clients>\n");
-    // }
-
-    pid = getpid();
-
-
-    if(!g_ctx.servername){
-        // Print app parameters. This is basically from rdma_bw app. Most of them are not used atm
-        printf("PID=%d | port=%d | ib_port=%d | size=%lu | tx_depth=%d | sl=%d |\n",
-            pid, g_ctx.port, g_ctx.ib_port, g_ctx.len, g_ctx.tx_depth, sl);
-    }
-
-    // Is later needed to create random number for psn
-    srand48(pid * time(NULL));
+void count_lines(char* filename, struct global_context *ctx) {
     
-    page_size = sysconf(_SC_PAGESIZE);
-
-    config_file = argv[1];
-    count_lines(config_file, &g_ctx);
-    
-    init_ctx_common(&g_ctx, false); // false = consensus thread
-
-    parse_config(config_file, &g_ctx);
-
-    printf("Current ip addresses before set local ib connection %s %s\n", g_ctx.qps[0].ip_address, g_ctx.qps[1].ip_address);
-
-    set_local_ib_connection(&g_ctx, false); // false = consensus thread
-    
-    g_ctx.sockfd = malloc(g_ctx.num_clients * sizeof(g_ctx.sockfd));
-
-    tcp_server_listen();
-
-    // TODO maybe sleep here
-    tcp_client_connect();
-
-
-    TEST_NZ(tcp_exch_ib_connection_info(&g_ctx),
-            "Could not exchange connection, tcp_exch_ib_connection");
-
-    // Print IB-connection details
-    printf("Consensus thread connections:\n");
-    for (int i = 0; i < g_ctx.num_clients; ++i) {
-        print_ib_connection("Local  Connection", &g_ctx.qps[i].local_connection);
-        print_ib_connection("Remote Connection", &g_ctx.qps[i].remote_connection);    
-    }
-    
-    spawn_leader_election_thread();
-
-    if(g_ctx.servername){ // I am a client
-        qp_change_state_rtr(&g_ctx);
-    } else { // I am the server
-        qp_change_state_rts(&g_ctx);
-    }   
-        
-    printf("Going to sleep before consensus\n");
-    sleep(15);
-
-
-    if(leader == g_ctx.my_index){
-
-
-        g_ctx.buf.log->firstUndecidedOffset = 0;
-        log_write_local_slot_string(g_ctx.buf.log, g_ctx.buf.log->firstUndecidedOffset, 4, "blablabla");
-        log_increment_fuo(g_ctx.buf.log);
-        log_write_local_slot_uint64(g_ctx.buf.log, g_ctx.buf.log->firstUndecidedOffset, 4, 5);
-        log_increment_fuo(g_ctx.buf.log);
-        log_write_local_slot_uint64(g_ctx.buf.log, g_ctx.buf.log->firstUndecidedOffset, 4, 5);
-
-        outer_loop(g_ctx.buf.log);
-        printf("Done with outer loop. Copying logs\n");
-
-        copy_remote_logs(0, SLOT, 7);
-        for (int i = 0; i < g_ctx.num_clients; ++i) {
-            log_print(g_ctx.qps[i].buf_copy.log);
-        }
-
-        // printf("Press ENTER to continue\n");
-        // getchar();
-        
-        // For now, the message to be written into the clients buffer can be edited here
-        //char *chPtr = &(g_ctx.buf.log->slots[0]);
-        //strcpy(chPtr,"Saluton Teewurst. UiUi");
-
-        // g_ctx.buf.log->minProposal = 70;
-        // g_ctx.buf.log->slots[0].accValue = 42;
-        // log_slot_t *slot = log_get_local_slot(g_ctx.buf.log, 4);
-        // slot->accValue = 42;
-
-        // // printf("Client. Writing to Server\n");
-        // for (int i = 0; i < g_ctx.num_clients; ++i) {
-        //     // rdma_write(i);
-        //     uint64_t remote_addr = log_get_remote_address(g_ctx.buf.log, slot, ((log_t*)g_ctx.qps[i].remote_connection.vaddr));
-        //     post_send(g_ctx.qps[i].qp, slot, sizeof(log_slot_t), g_ctx.qps[i].mr->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, 42);
-
-        // }
-
-        // struct ibv_wc wc;
-        // //int n, uint64_t round_nb, struct ibv_cq *cq, int num_entries, struct ibv_wc *wc_array);
-        // wait_for_n(g_ctx.num_clients, 42, g_ctx.cq, 1, &wc);
-        
-        // printf("Server. Done with write. Reading from client\n");
-
-        // sleep(1);
-        // rdma_read(ctx, &data, 0);
-        // printf("Printing local buffer: %s\n" ,chPtr);
-        
-    } else { // Client
-
-        // permission_switch(g_ctx.mr[1], g_ctx.mr[0], g_ctx.pd, g_ctx.buf, g_ctx.size*2, IBV_ACCESS_LOCAL_WRITE, IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE);
-        // permission_switch(g_ctx.mr[0], g_ctx.mr[1], g_ctx.pd, g_ctx.buf, g_ctx.size*2, IBV_ACCESS_LOCAL_WRITE, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
-        // ibv_rereg_mr(g_ctx.mr[0], IBV_REREG_MR_CHANGE_ACCESS, g_ctx.pd, g_ctx.buf, g_ctx.size * 2, IBV_ACCESS_LOCAL_WRITE);
-        // ibv_rereg_mr(g_ctx.mr[1], IBV_REREG_MR_CHANGE_ACCESS, g_ctx.pd, g_ctx.buf, g_ctx.size * 2, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
-       
-        sleep(3);
-        printf("Client. Reading Local-Buffer (Buffer that was registered with MR)\n");
-        
-        // char *chPtr = (char *)g_ctx.qps[0].local_connection.vaddr;
-            
-        // while(1){
-        //     if(strlen(chPtr) > 0){
-        //         break;
-        //     }
-        // }
-
-
-
-        log_print(g_ctx.buf.log);
-        
-    }
-
-    printf("Going to sleep after consensus\n");
-    sleep(15);
-    
-    printf("Destroying IB context\n");
-    destroy_ctx(&g_ctx, false);
-    
-    printf("Closing socket\n");
-    for (int i = 0; i < g_ctx.num_clients; ++i) {
-        close(g_ctx.sockfd[i]);
-    }    
-    return 0;
-}
-
-static void
-spawn_leader_election_thread() {
-    pthread_t le_thread;
-    
-    TEST_NZ(pthread_create(&le_thread, NULL, leader_election, NULL), "Could not create leader election thread");
-}
-
-static void*
-leader_election(void* arg) {
-    // create & initialize a le context
-    le_ctx.ib_dev             = g_ctx.ib_dev;
-    le_ctx.context            = g_ctx.context;
-    le_ctx.num_clients        = g_ctx.num_clients;
-    le_ctx.port               = g_ctx.port;
-    le_ctx.ib_port            = g_ctx.ib_port;
-    le_ctx.tx_depth           = g_ctx.tx_depth;
-    le_ctx.servername         = g_ctx.servername;
-    le_ctx.sockfd             = g_ctx.sockfd;
-
-
-    init_ctx_common(&le_ctx, true); // true = leader election thread
-
-    parse_config(config_file, &le_ctx);
-
-    // we don't need a log structure in the leader election thread
-    // for now, zero it out and interpret it as a counter
-    // memset(le_ctx.buf.log,0,log
-
-    // use the tcp connections to exchange qp info
-    set_local_ib_connection(&le_ctx, true); // true = leader election thread
-
-
-    TEST_NZ(tcp_exch_ib_connection_info(&le_ctx),
-            "Could not exchange connection, tcp_exch_ib_connection");
-
-    // Print IB-connection details
-    printf("Leader election connections:\n");
-    for (int i = 0; i < le_ctx.num_clients; ++i) {
-        print_ib_connection("Local  Connection", &le_ctx.qps[i].local_connection);
-        print_ib_connection("Remote Connection", &le_ctx.qps[i].remote_connection);    
-    }
-
-
-    // bring the qps to the right states
-    // for (int i = 0; i < le_ctx.num_clients; ++i) {
-    //     qp_change_state_rts(le_ctx.qps[i].qp, i);
-    // }
-
-
-    qp_change_state_rts(&le_ctx);
-
-    printf("Going to sleep le\n");
-    sleep(5);
-        
-    // start the leader election loop
-    int i=0;
-    while (i++ < 10) {
-        // increment a local counter
-        le_ctx.buf.counter->count_cur++;
-        // read (RDMA) counters of everyone*
-        rdma_read_all_counters();
-        // figure out who is leader
-        // and communicate the leader to the main thread
-        leader = decide_leader();
-
-        // sleep
-        nanosleep((const struct timespec[]){{0, LE_SLEEP_DURATION_NS}}, NULL);
-    }
-
-    destroy_ctx(&le_ctx, true);
-    pthread_exit(NULL);   
-}
-
-static void
-rdma_read_all_counters() {
-
-    void* local_address;
-    uint64_t remote_addr;
-    size_t req_size;
-    uint64_t wrid = 0;
-
-    le_ctx.round_nb++;
-    WRID_SET_SSN(wrid, le_ctx.round_nb);
-
-    // shift the counters
-    for (int i = 0; i < le_ctx.num_clients; ++i) {
-        counter_t* counters = le_ctx.qps[i].buf_copy.counter;
-        counters->count_oldest = counters->count_old;
-        counters->count_old = counters->count_cur;
-    }
-
-    for (int i = 0; i < le_ctx.num_clients; ++i) {
-
-        local_address = le_ctx.qps[i].buf_copy.counter;
-        req_size = sizeof(uint64_t);
-
-        WRID_SET_CONN(wrid, i);
-        remote_addr = le_ctx.qps[i].remote_connection.vaddr;
-        post_send(le_ctx.qps[i].qp, local_address, req_size, le_ctx.qps[i].mr_read->lkey, le_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_READ, wrid, true);
-    }
-
-    nanosleep((const struct timespec[]){{0, SHORT_SLEEP_DURATION_NS}}, NULL);
-
-    struct ibv_wc wc_array[le_ctx.num_clients];
-
-    wait_for_n(1, le_ctx.round_nb, le_ctx.cq, le_ctx.num_clients, wc_array, le_ctx.completed_ops);
-
-}
-
-static int
-decide_leader() {
-    for (int i = 0; i < le_ctx.my_index; ++i) {
-
-        counter_t* counters = le_ctx.qps[i].buf_copy.counter;
-        if (counters->count_old != counters->count_oldest) { // this node has moved
-            // return i;
-            printf("Node %d is my leader\n", i);
-            return i;
-        }
-        
-        // if there is no concurrent read of the counters in progress, look at the most recent read counter as well
-        if (le_ctx.completed_ops[i] == le_ctx.round_nb) {
-            if (counters->count_cur != counters->count_old) {
-                printf("Node %d is my leader\n", i);
-                return i;
-            }
-        }
-    }
-
-    // return myself (no smaller id incremented their counter)
-    printf("I am the leader\n");
-    return le_ctx.my_index;
-}
-
-
-static void count_lines(char* filename, struct global_context *ctx) {
-    
-
-
     FILE * fp;
     char * line = malloc(NI_MAXHOST * sizeof(char));
     size_t len = NI_MAXHOST * sizeof(char);
@@ -417,7 +33,7 @@ static void count_lines(char* filename, struct global_context *ctx) {
     //  else, id[next available qp_context] = the number of the current line
 }
 
-static void parse_config(char* filename, struct global_context *ctx) {
+void parse_config(char* filename, struct global_context *ctx) {
     struct ifaddrs *ifaddr;
     
 
@@ -465,7 +81,7 @@ static void parse_config(char* filename, struct global_context *ctx) {
     //  else, id[next available qp_context] = the number of the current line
 }
 
-static bool
+bool
 compare_to_self(struct ifaddrs *ifaddr, char *addr) {
     struct ifaddrs *ifa;
     int family;
@@ -500,7 +116,7 @@ compare_to_self(struct ifaddrs *ifaddr, char *addr) {
  * ********************
  *    Creates a connection to a TCP server 
  */
-static void tcp_client_connect()
+void tcp_client_connect()
 {
     struct addrinfo *res, *t;
     struct addrinfo hints = {
@@ -554,7 +170,7 @@ static void tcp_client_connect()
  * *******************
  *  Creates a TCP server socket  which listens for incoming connections 
  */
-static void tcp_server_listen() {
+void tcp_server_listen() {
     struct addrinfo *res;
     struct addrinfo hints = {
         .ai_flags        = AI_PASSIVE,
@@ -607,7 +223,7 @@ static void tcp_server_listen() {
 
 }
 
-static void init_buf_le(struct global_context* ctx) {
+void init_buf_le(struct global_context* ctx) {
     le_ctx.buf.counter = malloc(sizeof(counter_t));
     memset(le_ctx.buf.counter, 0, sizeof(counter_t));
     le_ctx.len = sizeof(counter_t);
@@ -617,7 +233,7 @@ static void init_buf_le(struct global_context* ctx) {
     }
 }
 
-static void init_buf_consensus(struct global_context* ctx) {
+void init_buf_consensus(struct global_context* ctx) {
 
     g_ctx.buf.log = log_new();
     g_ctx.len = log_size(g_ctx.buf.log);
@@ -632,7 +248,7 @@ static void init_buf_consensus(struct global_context* ctx) {
  *    This method initializes the Infiniband Context
  *     It creates structures for: ProtectionDomain, MemoryRegion, CompletionChannel, Completion Queues, Queue Pair
  */
-static void init_ctx_common(struct global_context* ctx, bool is_le)
+void init_ctx_common(struct global_context* ctx, bool is_le)
 {
     
     // TEST_NZ(posix_memalign(&g_ctx.buf, page_size, g_ctx.size * 2),
@@ -716,7 +332,7 @@ static void init_ctx_common(struct global_context* ctx, bool is_le)
     qp_change_state_init(ctx);        
 }
 
-static void destroy_ctx(struct global_context* ctx, bool is_le){
+void destroy_ctx(struct global_context* ctx, bool is_le){
         
     for (int i = 0; i < ctx->num_clients; i++) {
         rc_qp_destroy( ctx->qps[i].qp, ctx->cq );
@@ -751,305 +367,5 @@ static void destroy_ctx(struct global_context* ctx, bool is_le){
     }
     free(ctx->completed_ops);
     
-}
-
-
-
-
-static void
-outer_loop(log_t *log) {
-    uint64_t propNr;
-    // while (true) {
-        // wait until I am leader
-        while (leader != g_ctx.my_index) {
-            nanosleep((const struct timespec[]){{0, SHORT_SLEEP_DURATION_NS}}, NULL);
-        }
-        // get permissions
-        // bring followers up to date with me
-        update_followers();
-        propNr = 1; // choose number higher than any proposal number seen before
-        inner_loop(log, propNr);
-    // }
-}
-
-static void
-inner_loop(log_t *log, uint64_t propNr) {
-    uint64_t offset = 0;
-    value_t* v;
-
-    bool needPreparePhase = true;
-
-    while (offset < 100) {
-        offset = log->firstUndecidedOffset;
-        if (needPreparePhase) {
-            read_min_proposals();
-            wait_for_majority();
-            if (!min_proposal_ok(propNr)) { // check if any of the read minProposals are larger than our propNr
-                return;
-            } 
-            // write propNr into minProposal at a majority of logs // if fails, goto outerLoop
-            write_min_proposal(log, propNr);
-            // read slot at position "offset" from a majority of logs // if fails, abort
-            copy_remote_logs(offset, SLOT, DEFAULT_VALUE_SIZE);
-            // value with highest accepted proposal among those read
-            value_t* freshVal = freshest_accepted_value(offset);
-            if (freshVal->len != 0) {
-                v = freshVal;
-            } else {
-                needPreparePhase = false;
-                // v = get_my_value();
-                v = malloc(sizeof(value_t) + sizeof(uint64_t));
-                v->len = sizeof(uint64_t);
-                memcpy(v->val, &offset, 8);
-            }
-        }
-        // write v, propNr into slot at position "offset" at a majority of logs // if fails, goto outerLoop
-        write_log_slot(log, offset, propNr, v);
-        wait_for_majority();
-        // increment the firstUndecidedOffset
-        log_increment_fuo(log);    
-    }
-}
-
-static void
-update_followers() {
-    void* local_address;
-    uint64_t remote_addr;
-    size_t req_size;
-    uint64_t wrid = 0;
-
-    int nb_to_wait = (g_ctx.num_clients/2) + 1;
-
-    g_ctx.round_nb++;
-    WRID_SET_SSN(wrid, g_ctx.round_nb);
-    for (int i = 0; i < g_ctx.num_clients; ++i) {
-    //  copy all or a part of the remote log
-    //  overwrite remote log from their firstUn.. to my firstUn...
-        if ( g_ctx.buf.log->firstUndecidedOffset <= g_ctx.qps[i].buf_copy.log->firstUndecidedOffset) {
-            nb_to_wait--;
-            continue;
-        }
-        WRID_SET_CONN(wrid, i);
-        local_address = log_get_local_slot(g_ctx.buf.log, g_ctx.qps[i].buf_copy.log->firstUndecidedOffset);
-        // here we are assuming that the logs agree up to g_ctx.qps[i].buf_copy.log->firstUndecidedOffset
-        req_size = g_ctx.buf.log->firstUndecidedOffset - g_ctx.qps[i].buf_copy.log->firstUndecidedOffset;
-        remote_addr = log_get_remote_address(g_ctx.buf.log, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
-        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, wrid, false);
-
-        //  update remote firstUndecidedOffset
-        local_address = &g_ctx.buf.log->firstUndecidedOffset;
-        req_size = sizeof(g_ctx.buf.log->firstUndecidedOffset);
-        remote_addr = log_get_remote_address(g_ctx.buf.log, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
-        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, wrid, true);        
-
-    }
-
-    if (nb_to_wait > 0) {
-        // array to store the work completions inside wait_for_n
-        // we might want to place this in the global context later
-        struct ibv_wc wc_array[g_ctx.num_clients];
-        // currently we are polling at most num_clients WCs from the CQ at a time
-        // we might want to change this number later
-        wait_for_n(nb_to_wait, g_ctx.round_nb, g_ctx.cq, g_ctx.num_clients, wc_array, g_ctx.completed_ops);        
-    }
-}
-
-static bool
-min_proposal_ok(uint64_t propNr) {
-
-    for (int i = 0; i < g_ctx.num_clients; ++i) {
-        if (g_ctx.qps[i].buf_copy.log->minProposal > propNr) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-static int
-write_log_slot(log_t* log, uint64_t offset, uint64_t propNr, value_t* value) {
-
-    if (value->len <= 8) {
-        printf("Write log slot %lu, %lu, %lu\n", offset, propNr, *(uint64_t*)value->val);
-        log_write_local_slot_uint64(log, offset, propNr, *(uint64_t*)value->val);
-    } else {
-        printf("Write log slot %lu, %lu, %s\n", offset, propNr, value->val);
-        log_write_local_slot_string(log, offset, propNr, (char*)value->val);        
-    }
-
-
-    // post sends to everyone
-    rdma_write_to_all(log, offset, SLOT, true);
-    
-}
-
-static int
-write_min_proposal(log_t* log, uint64_t propNr) {
-    log->minProposal = propNr;
-
-    rdma_write_to_all(log, 0, MIN_PROPOSAL, false); // offset is ignored for MIN_PROPOSAL
-}
-
-
-static int
-read_min_proposals() {
-
-    copy_remote_logs(0, MIN_PROPOSAL, 0); // size and offset are ignored for MIN_PROPOSAL
-}
-
-static int
-copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size) {
-
-    void* local_address;
-    uint64_t remote_addr;
-    size_t req_size;
-    log_slot_t *slot;
-    uint64_t wrid = 0;
-
-    g_ctx.round_nb++;
-    WRID_SET_SSN(wrid, g_ctx.round_nb);
-
-    for (int i = 0; i < g_ctx.num_clients; ++i) {
-
-        switch(type) {
-            case SLOT:
-                slot = log_get_local_slot(g_ctx.qps[i].buf_copy.log, offset);
-                local_address = slot;
-                // Igor: problem: we can't know ahead of time how big the slot will be
-                // Idea: initially copy a default size (large enough to include the length) and if not enough, copy again
-                req_size = sizeof(log_slot_t) + size;
-                break;
-            case MIN_PROPOSAL:
-                local_address = &g_ctx.qps[i].buf_copy.log->minProposal;
-                req_size = sizeof(g_ctx.qps[i].buf_copy.log->minProposal);
-                break;
-        }   
-
-        WRID_SET_CONN(wrid, i);
-        remote_addr = log_get_remote_address(g_ctx.qps[i].buf_copy.log, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
-        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_read->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_READ, wrid, true);
-    }
-
-    if (type != SLOT) return;
-
-    // for each entry that was seen as completed by the most recent wait_for_n
-    // check length and, if necessary, re-issue read
-    // wait for "the right number" complete
-    // re-check and potentially start over
-    int majority = (g_ctx.num_clients/2) + 1;
-    int not_ok_slots = majority;
-    struct ibv_wc wc_array[g_ctx.num_clients];
-    uint64_t correct_sizes[g_ctx.num_clients];
-    for (int i = 0; i < g_ctx.num_clients; ++i) {
-        correct_sizes[i] = size;
-    }
-
-
-    while (not_ok_slots > 0) {
-        wait_for_n(not_ok_slots, g_ctx.round_nb, g_ctx.cq, g_ctx.num_clients, wc_array, g_ctx.completed_ops);
-
-        not_ok_slots = 0;
-        for (int i = 0; i < g_ctx.num_clients; ++i) {
-            if (g_ctx.completed_ops[i] == g_ctx.round_nb) {
-                slot = log_get_local_slot(g_ctx.qps[i].buf_copy.log, offset);
-                if (slot->accValue.len > correct_sizes[i]) {
-                    not_ok_slots++;
-                    // increase length
-                    // re-issue the copy for this specific slot
-                    local_address = slot;
-                    // Igor: problem: we can't know ahead of time how big the slot will be
-                    // Idea: initially copy a default size (large enough to include the length) and if not enough, copy again
-                    req_size = sizeof(log_slot_t) + slot->accValue.len;
-                    correct_sizes[i] = slot->accValue.len; // so that on the next loop iteration, we compare against the right size
-                    WRID_SET_CONN(wrid, i);
-                    remote_addr = log_get_remote_address(g_ctx.qps[i].buf_copy.log, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
-                    post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_read->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_READ, wrid, true);
-                }
-            }
-        }
-    }
-}
-
-static void
-rdma_write_to_all(log_t* log, uint64_t offset, write_location_t type, bool signaled) {
-
-    void* local_address;
-    uint64_t remote_addr;
-    size_t req_size;
-    uint64_t wrid = 0;
-
-
-    switch(type) {
-        case SLOT:
-            local_address = log_get_local_slot(log, offset);
-            req_size = log_slot_size(g_ctx.buf.log, offset);
-            break;
-        case MIN_PROPOSAL:
-            local_address = &log->minProposal;
-            req_size = sizeof(log->minProposal);
-            break;
-    }
-
-    g_ctx.round_nb++;
-    WRID_SET_SSN(wrid, g_ctx.round_nb);
-    for (int i = 0; i < g_ctx.num_clients; ++i) {
-
-        WRID_SET_CONN(wrid, i);
-        remote_addr = log_get_remote_address(log, local_address, ((log_t*)g_ctx.qps[i].remote_connection.vaddr));
-        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, wrid, signaled);
-    }
-}
-
-// Igor - potential problem: we only look at fresh items, but copy_remote_logs might have cleared and overwritten the completed_ops
-// array several times, so we cannot know which are the fresh items
-// Can solve this in wait_for_n: don't clear completed_ops, rather update it with the most recent round_nb for which we have reveiced a 
-static value_t*
-freshest_accepted_value(uint64_t offset) {
-    uint64_t max_acc_prop;
-    value_t* freshest_value;
-    
-    // start with my accepted proposal and value for the given offset
-    log_slot_t* my_slot = log_get_local_slot(g_ctx.buf.log, offset);
-    max_acc_prop = my_slot->accProposal;
-    freshest_value = &my_slot->accValue;
-
-    // go only through "fresh" slots (those to which reads were completed in the preceding wait_for_n)
-    log_slot_t* remote_slot;
-    for (int i = 0; i < g_ctx.num_clients; ++i) {
-        if (g_ctx.completed_ops[i] == g_ctx.round_nb) {
-            remote_slot = log_get_local_slot(g_ctx.qps[i].buf_copy.log, offset);
-            if (remote_slot->accProposal > max_acc_prop) {
-                max_acc_prop = remote_slot->accProposal;
-                freshest_value = &remote_slot->accValue;
-            }            
-        }
-    }
-
-    return freshest_value;
-}
-
-
-
-
-static void
-wait_for_majority() {
-    int majority = (g_ctx.num_clients/2) + 1;
-
-    // array to store the work completions inside wait_for_n
-    // we might want to place this in the global context later
-    struct ibv_wc wc_array[g_ctx.num_clients];
-    // currently we are polling at most num_clients WCs from the CQ at a time
-    // we might want to change this number later
-    wait_for_n(majority, g_ctx.round_nb, g_ctx.cq, g_ctx.num_clients, wc_array, g_ctx.completed_ops);
-}
-
-static void
-wait_for_all() {
-    // array to store the work completions inside wait_for_n
-    // we might want to place this in the global context later
-    struct ibv_wc wc_array[g_ctx.num_clients];
-    // currently we are polling at most num_clients WCs from the CQ at a time
-    // we might want to change this number later
-    wait_for_n(g_ctx.num_clients, g_ctx.round_nb, g_ctx.cq, g_ctx.num_clients, wc_array, g_ctx.completed_ops); 
 }
 

@@ -2,7 +2,7 @@
 #define LOG_H
 
 #define DEFAULT_VALUE_SIZE 8 // value size if it is uint64_t
-#define DEFAULT_LOG_LENGTH 1000
+#define DEFAULT_LOG_LENGTH 1000000
 
 struct value_t {
     uint64_t len;

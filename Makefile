@@ -18,8 +18,8 @@ all: rdma-consensus
 # 	$(CC) $(CFLAGS) ibv_layer.c -o ibv_layer.o $(LDFLAGS)
 
 rdma-consensus: 
-	$(CC) $(CFLAGS) rdma-consensus.c ibv_layer.c -o $(BIN) $(LDFLAGS)
- 
+	$(CC) $(CFLAGS) ibv_layer.c  consensus-protocol.c rdma-consensus.c leader-election.c test.c -o $(BIN) $(LDFLAGS)
+
 # .c.o:
 # 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
