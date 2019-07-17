@@ -328,8 +328,8 @@ void init_ctx_common(struct global_context* ctx, bool is_le)
         TEST_Z(ctx->qps[i].qp = ibv_create_qp(ctx->pd, &qp_init_attr),
                 "Could not create queue pair, ibv_create_qp");    
         
+        qp_change_state_init(&ctx->qps[i], ctx->ib_port);        
     }
-    qp_change_state_init(ctx);        
 }
 
 void destroy_ctx(struct global_context* ctx, bool is_le){

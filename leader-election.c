@@ -66,12 +66,10 @@ leader_election(void* arg) {
 
 
     // bring the qps to the right states
-    // for (int i = 0; i < le_ctx.num_clients; ++i) {
-    //     qp_change_state_rts(le_ctx.qps[i].qp, i);
-    // }
+    for (int i = 0; i < le_ctx.num_clients; ++i) {
+        qp_change_state_rts(&le_ctx.qps[i], le_ctx.ib_port);
+    }
 
-
-    qp_change_state_rts(&le_ctx);
 
     printf("Going to sleep le\n");
     sleep(5);

@@ -8,10 +8,12 @@ void print_ib_connection(char *conn_name, struct ib_connection *conn);
 
 int tcp_exch_ib_connection_info();
 
-int qp_change_state_init(struct global_context* ctx);
-int qp_change_state_rtr(struct global_context* ctx);
-int qp_change_state_rts(struct global_context* ctx);
+int qp_change_state_reset( struct qp_context *qpc );
+int qp_change_state_init(struct qp_context *qpc, int ib_port);
+int qp_change_state_rtr(struct qp_context *qpc, int ib_port);
+int qp_change_state_rts(struct qp_context *qpc, int ib_port);
 void rc_qp_destroy( struct ibv_qp *qp, struct ibv_cq *cq );
+int qp_restart( struct qp_context *qpc, int ib_port);
 
 void rdma_write(int id);
 void rdma_read(int id);
@@ -140,7 +142,7 @@ static int wait_for_n(int n, uint64_t round_nb, struct ibv_cq *cq, int num_entri
         }
     }
 
-    return 0;
+    return ret;
 }
 
 static int

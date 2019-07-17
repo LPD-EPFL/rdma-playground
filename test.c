@@ -62,11 +62,9 @@ int main(int argc, char *argv[])
     
     spawn_leader_election_thread();
 
-    if(g_ctx.servername){ // I am a client
-        qp_change_state_rtr(&g_ctx);
-    } else { // I am the server
-        qp_change_state_rts(&g_ctx);
-    }   
+    for (int i = 0; i < g_ctx.num_clients; ++i) {
+        qp_change_state_rts(&g_ctx.qps[i], g_ctx.ib_port);
+    }  
         
     printf("Going to sleep before consensus\n");
     

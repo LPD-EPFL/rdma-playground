@@ -76,33 +76,45 @@ int tcp_exch_ib_connection_info(struct global_context* ctx){
     return 0;
 }
 
+/**
+ * Move a QP to the RESET state 
+ */
+int
+qp_change_state_reset( struct qp_context *qpc )
+{
+    struct ibv_qp_attr attr;
+
+    memset(&attr, 0, sizeof(attr));
+    attr.qp_state = IBV_QPS_RESET; 
+
+    TEST_NZ(ibv_modify_qp(qpc->qp, &attr, IBV_QP_STATE),
+                "Could not modify QP to RESET, ibv_modify_qp");
+    
+    return 0;
+}
+
 
 /*
  *  qp_change_state_init
  * **********************
  *    Changes Queue Pair status to INIT
  */
-int qp_change_state_init(struct global_context* ctx){
+int qp_change_state_init(struct qp_context *qpc, int ib_port){
     
-    struct ibv_qp_attr *attr;
+    struct ibv_qp_attr attr;
+    memset(&attr, 0, sizeof(attr));
 
-    attr =  malloc(sizeof *attr);
-    memset(attr, 0, sizeof *attr);
+    attr.qp_state            = IBV_QPS_INIT;
+    attr.pkey_index          = 0;
+    attr.port_num            = ib_port;
+    attr.qp_access_flags     = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ;
 
-    attr->qp_state            = IBV_QPS_INIT;
-    attr->pkey_index          = 0;
-    attr->port_num            = ctx->ib_port;
-    attr->qp_access_flags     = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ;
-
-    for (int i = 0; i < ctx->num_clients; ++i) {
-        TEST_NZ(ibv_modify_qp(ctx->qps[i].qp, attr,
-                                IBV_QP_STATE        |
-                                IBV_QP_PKEY_INDEX   |
-                                IBV_QP_PORT         |
-                                IBV_QP_ACCESS_FLAGS),
-                "Could not modify QP to INIT, ibv_modify_qp");
-    }
-
+    TEST_NZ(ibv_modify_qp(qpc->qp, &attr,
+                            IBV_QP_STATE        |
+                            IBV_QP_PKEY_INDEX   |
+                            IBV_QP_PORT         |
+                            IBV_QP_ACCESS_FLAGS),
+            "Could not modify QP to INIT, ibv_modify_qp");
 
     return 0;
 }
@@ -112,40 +124,32 @@ int qp_change_state_init(struct global_context* ctx){
  * **********************
  *  Changes Queue Pair status to RTR (Ready to receive)
  */
-int qp_change_state_rtr(struct global_context* ctx){
+int qp_change_state_rtr(struct qp_context *qpc, int ib_port){
     
-    struct ibv_qp_attr *attr;
+    struct ibv_qp_attr attr;
+    memset(&attr, 0, sizeof(attr));
 
-    attr =  malloc(sizeof *attr);
+    attr.qp_state              = IBV_QPS_RTR;
+    attr.path_mtu              = IBV_MTU_2048;
+    attr.dest_qp_num           = qpc->remote_connection.qpn;
+    attr.rq_psn                = qpc->remote_connection.psn;
+    attr.max_dest_rd_atomic    = 1;
+    attr.min_rnr_timer         = 12;
+    attr.ah_attr.is_global     = 0;
+    attr.ah_attr.dlid          = qpc->remote_connection.lid;
+    attr.ah_attr.sl            = sl;
+    attr.ah_attr.src_path_bits = 0;
+    attr.ah_attr.port_num      = ib_port;
 
-    for (int i = 0; i < ctx->num_clients; ++i) {
-        /* code */
-        memset(attr, 0, sizeof *attr);
-
-        attr->qp_state              = IBV_QPS_RTR;
-        attr->path_mtu              = IBV_MTU_2048;
-        attr->dest_qp_num           = ctx->qps[i].remote_connection.qpn;
-        attr->rq_psn                = ctx->qps[i].remote_connection.psn;
-        attr->max_dest_rd_atomic    = 1;
-        attr->min_rnr_timer         = 12;
-        attr->ah_attr.is_global     = 0;
-        attr->ah_attr.dlid          = ctx->qps[i].remote_connection.lid;
-        attr->ah_attr.sl            = sl;
-        attr->ah_attr.src_path_bits = 0;
-        attr->ah_attr.port_num      = ctx->ib_port;
-
-        TEST_NZ(ibv_modify_qp(ctx->qps[i].qp, attr,
-                    IBV_QP_STATE                |
-                    IBV_QP_AV                   |
-                    IBV_QP_PATH_MTU             |
-                    IBV_QP_DEST_QPN             |
-                    IBV_QP_RQ_PSN               |
-                    IBV_QP_MAX_DEST_RD_ATOMIC   |
-                    IBV_QP_MIN_RNR_TIMER),
-            "Could not modify QP to RTR state");
-    }
-
-    free(attr);
+    TEST_NZ(ibv_modify_qp(qpc->qp, &attr,
+                IBV_QP_STATE                |
+                IBV_QP_AV                   |
+                IBV_QP_PATH_MTU             |
+                IBV_QP_DEST_QPN             |
+                IBV_QP_RQ_PSN               |
+                IBV_QP_MAX_DEST_RD_ATOMIC   |
+                IBV_QP_MIN_RNR_TIMER),
+        "Could not modify QP to RTR state");
     
     return 0;
 }
@@ -157,41 +161,55 @@ int qp_change_state_rtr(struct global_context* ctx){
  *  Changes Queue Pair status to RTS (Ready to send)
  *    QP status has to be RTR before changing it to RTS
  */
-int qp_change_state_rts(struct global_context* ctx){
+int qp_change_state_rts(struct qp_context *qpc, int ib_port){
 
-    qp_change_state_rtr(ctx); 
+    qp_change_state_rtr(qpc, ib_port); 
     
-    struct ibv_qp_attr *attr;
+    struct ibv_qp_attr attr;
+    memset(&attr, 0, sizeof attr);
 
-    attr =  malloc(sizeof *attr);
-    for (int i = 0; i < ctx->num_clients; ++i) {
-        memset(attr, 0, sizeof *attr);
+    attr.qp_state              = IBV_QPS_RTS;
+    attr.timeout               = 14;
+    attr.retry_cnt             = 7;
+    attr.rnr_retry             = 7;    /* infinite retry */
+    attr.sq_psn                = qpc->local_connection.psn;
+    attr.max_rd_atomic         = 1;
 
-        attr->qp_state              = IBV_QPS_RTS;
-        attr->timeout               = 14;
-        attr->retry_cnt             = 7;
-        attr->rnr_retry             = 7;    /* infinite retry */
-        attr->sq_psn                = ctx->qps[i].local_connection.psn;
-        attr->max_rd_atomic         = 1;
-
-        TEST_NZ(ibv_modify_qp(ctx->qps[i].qp, attr,
-                    IBV_QP_STATE            |
-                    IBV_QP_TIMEOUT          |
-                    IBV_QP_RETRY_CNT        |
-                    IBV_QP_RNR_RETRY        |
-                    IBV_QP_SQ_PSN           |
-                    IBV_QP_MAX_QP_RD_ATOMIC),
-            "Could not modify QP to RTS state");
-    }
-
-    free(attr);
+    TEST_NZ(ibv_modify_qp(qpc->qp, &attr,
+                IBV_QP_STATE            |
+                IBV_QP_TIMEOUT          |
+                IBV_QP_RETRY_CNT        |
+                IBV_QP_RNR_RETRY        |
+                IBV_QP_SQ_PSN           |
+                IBV_QP_MAX_QP_RD_ATOMIC),
+        "Could not modify QP to RTS state");
+    
 
     return 0;
 }
 
+
+/** 
+ * Restarts a certain QP: *->RESET->INIT->RTR->RTS
+ * used only in case of ERROR
+ */ 
+int 
+qp_restart( struct qp_context *qpc, int ib_port) {    
+
+    TEST_NZ(qp_change_state_reset(qpc),
+        "Cannot move QP to reset state\n"); 
+
+    TEST_NZ(qp_change_state_init(qpc, ib_port),
+        "Cannot move QP to init state\n");
+
+    TEST_NZ(qp_change_state_rts(qpc, ib_port),
+        "Cannot move QP to RTS state\n");
+    
+    return 0;
+}
+
 void 
-rc_qp_destroy( struct ibv_qp *qp, struct ibv_cq *cq )
-{
+rc_qp_destroy( struct ibv_qp *qp, struct ibv_cq *cq ) {
     struct ibv_qp_attr attr;
     struct ibv_qp_init_attr init_attr;
     struct ibv_wc wc;
