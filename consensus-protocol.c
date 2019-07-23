@@ -114,7 +114,7 @@ update_followers() {
         struct ibv_wc wc_array[g_ctx.num_clients];
         // currently we are polling at most num_clients WCs from the CQ at a time
         // we might want to change this number later
-        wait_for_n(nb_to_wait, g_ctx.round_nb, g_ctx.cq, g_ctx.num_clients, wc_array, g_ctx.completed_ops);        
+        wait_for_n(nb_to_wait, g_ctx.round_nb, g_ctx, g_ctx.num_clients, wc_array, g_ctx.completed_ops);        
     }
 }
 
@@ -210,7 +210,7 @@ copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size) {
 
 
     while (not_ok_slots > 0) {
-        wait_for_n(not_ok_slots, g_ctx.round_nb, g_ctx.cq, g_ctx.num_clients, wc_array, g_ctx.completed_ops);
+        wait_for_n(not_ok_slots, g_ctx.round_nb, &g_ctx, g_ctx.num_clients, wc_array, g_ctx.completed_ops);
 
         not_ok_slots = 0;
         for (int i = 0; i < g_ctx.num_clients; ++i) {
@@ -304,7 +304,7 @@ wait_for_majority() {
     struct ibv_wc wc_array[g_ctx.num_clients];
     // currently we are polling at most num_clients WCs from the CQ at a time
     // we might want to change this number later
-    wait_for_n(majority, g_ctx.round_nb, g_ctx.cq, g_ctx.num_clients, wc_array, g_ctx.completed_ops);
+    wait_for_n(majority, g_ctx.round_nb, &g_ctx, g_ctx.num_clients, wc_array, g_ctx.completed_ops);
 }
 
 void
@@ -314,6 +314,6 @@ wait_for_all() {
     struct ibv_wc wc_array[g_ctx.num_clients];
     // currently we are polling at most num_clients WCs from the CQ at a time
     // we might want to change this number later
-    wait_for_n(g_ctx.num_clients, g_ctx.round_nb, g_ctx.cq, g_ctx.num_clients, wc_array, g_ctx.completed_ops); 
+    wait_for_n(g_ctx.num_clients, g_ctx.round_nb, &g_ctx, g_ctx.num_clients, wc_array, g_ctx.completed_ops); 
 }
 

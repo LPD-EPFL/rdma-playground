@@ -108,7 +108,7 @@ handle_work_completion( struct ibv_wc *wc )
 // num_entries = maximum number of entries to poll from cq
 // wc_array = a pre-allocated array to store the polled work completions 
 // Returns:
-static int wait_for_n(int n, uint64_t round_nb, struct ibv_cq *cq, int num_entries, struct ibv_wc *wc_array, uint64_t* completed_ops) {
+static int wait_for_n(int n, uint64_t round_nb, struct global_context* ctx, int num_entries, struct ibv_wc *wc_array, uint64_t* completed_ops) {
     int success_count = 0;
     int ne = 0;
     int i;
@@ -118,7 +118,7 @@ static int wait_for_n(int n, uint64_t round_nb, struct ibv_cq *cq, int num_entri
 
     while (success_count < n) {
         // poll
-        ne = ibv_poll_cq(cq, num_entries, wc_array);
+        ne = ibv_poll_cq(ctx->cq, num_entries, wc_array);
 
         TEST_N(ne, "Unable to poll from CQ");
         // check what was polled
@@ -136,6 +136,8 @@ static int wait_for_n(int n, uint64_t round_nb, struct ibv_cq *cq, int num_entri
 
             } else if (ret == WC_EXPECTED_ERROR) {
                 // TODO handle the error
+                cid = WRID_GET_CONN(wr_id);
+                qp_restart(ctx->qps[cid], ctx->ib_port);
             } else { // unexpected error
                 die("Unexpected error while polling");
             }
