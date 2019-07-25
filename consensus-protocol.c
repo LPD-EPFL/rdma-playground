@@ -1,24 +1,9 @@
 #include "consensus-protocol.h"
 
-extern atomic_int leader;
+extern int leader;
 
-struct global_context g_ctx = {
-    .ib_dev             = NULL,
-    .context            = NULL,
-    .pd                 = NULL,
-    .cq                 = NULL,
-    .ch                 = NULL,
-    .qps                = NULL,
-    .round_nb           = 0,
-    .num_clients        = 0,
-    .port               = 18515,
-    .ib_port            = 1,
-    .tx_depth           = 100,
-    .servername         = NULL,
-    .buf.log            = NULL,
-    .len                = 0,
-    .completed_ops      = NULL
-};
+struct global_context g_ctx;
+
 
 void
 outer_loop(log_t *log) {
@@ -62,7 +47,7 @@ inner_loop(log_t *log, uint64_t propNr) {
             } else {
                 needPreparePhase = false;
                 // v = get_my_value();
-                v = malloc(sizeof(value_t) + sizeof(uint64_t));
+                v = (value_t*)malloc(sizeof(value_t) + sizeof(uint64_t));
                 v->len = sizeof(uint64_t);
                 memcpy(v->val, &offset, 8);
             }
@@ -114,7 +99,7 @@ update_followers() {
         struct ibv_wc wc_array[g_ctx.num_clients];
         // currently we are polling at most num_clients WCs from the CQ at a time
         // we might want to change this number later
-        wait_for_n(nb_to_wait, g_ctx.round_nb, g_ctx, g_ctx.num_clients, wc_array, g_ctx.completed_ops);        
+        wait_for_n(nb_to_wait, g_ctx.round_nb, &g_ctx, g_ctx.num_clients, wc_array, g_ctx.completed_ops);        
     }
 }
 
@@ -161,7 +146,7 @@ read_min_proposals() {
     copy_remote_logs(0, MIN_PROPOSAL, 0); // size and offset are ignored for MIN_PROPOSAL
 }
 
-int
+void
 copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size) {
 
     void* local_address;

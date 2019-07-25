@@ -1,26 +1,11 @@
 #include "leader-election.h"
 
-struct global_context le_ctx = {
-    .ib_dev             = NULL,
-    .context            = NULL,
-    .pd                 = NULL,
-    .cq                 = NULL,
-    .ch                 = NULL,
-    .qps                = NULL,
-    .round_nb           = 0,
-    .num_clients        = 0,
-    .port               = 18515,
-    .ib_port            = 1,
-    .tx_depth           = 100,
-    .servername         = NULL,
-    .buf.counter        = NULL,
-    .len                = 0,
-    .completed_ops      = NULL
-};
+struct global_context le_ctx;
+
 
 extern struct global_context g_ctx;
 extern char* config_file;
-extern atomic_int leader;
+extern int leader;
 
 void
 spawn_leader_election_thread() {
@@ -31,6 +16,7 @@ spawn_leader_election_thread() {
 
 void*
 leader_election(void* arg) {
+    le_ctx = create_ctx();
     // create & initialize a le context
     le_ctx.ib_dev             = g_ctx.ib_dev;
     le_ctx.context            = g_ctx.context;
@@ -125,7 +111,7 @@ rdma_read_all_counters() {
 
     struct ibv_wc wc_array[le_ctx.num_clients];
 
-    wait_for_n(1, le_ctx.round_nb, le_ctx.cq, le_ctx.num_clients, wc_array, le_ctx.completed_ops);
+    wait_for_n(1, le_ctx.round_nb, &le_ctx, le_ctx.num_clients, wc_array, le_ctx.completed_ops);
 
 }
 

@@ -1,6 +1,10 @@
 #ifndef LOG_H
 #define LOG_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define DEFAULT_VALUE_SIZE 8 // value size if it is uint64_t
 #define DEFAULT_LOG_LENGTH 1000000
 
@@ -133,6 +137,8 @@ log_print(log_t* log) {
     printf("}\n");
 }
 
-
+#ifdef __cplusplus
+}
+#endif
 
 #endif

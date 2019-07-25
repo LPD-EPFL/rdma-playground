@@ -1,5 +1,6 @@
 #include "rdma-consensus.h"
 
+#include "gtest/gtest.h"
 
 #define NB_ITERATIONS 10000
 
@@ -13,11 +14,37 @@ int leader = 0;
 
 extern struct global_context g_ctx;
 
+namespace {
 
-int main(int argc, char *argv[])
-{
-    g_ctx = create_ctx();
+
+
+TEST(RDMATest, HelloWorld) {
+  //empty
+}
+
+TEST(RDMATest, InitStruct) {
+  struct global_context g_ctx;
+  g_ctx.ib_dev             = NULL;
+  g_ctx.context            = NULL;
+  g_ctx.pd                 = NULL;
+  g_ctx.cq                 = NULL;
+  g_ctx.ch                 = NULL;
+  g_ctx.qps                = NULL;
+  g_ctx.round_nb           = 0;
+  g_ctx.num_clients        = 0;
+  g_ctx.port               = 18515;
+  g_ctx.ib_port            = 1;
+  g_ctx.tx_depth           = 100;
+  g_ctx.servername         = NULL;
+  g_ctx.buf.log            = NULL;
+  g_ctx.len                = 0;
+  g_ctx.completed_ops      = NULL;
+}
+
+TEST(RDMATest, BigTest) {
     pid = getpid();
+
+    g_ctx = create_ctx();
 
 
     if(!g_ctx.servername){
@@ -31,7 +58,7 @@ int main(int argc, char *argv[])
     
     page_size = sysconf(_SC_PAGESIZE);
 
-    config_file = argv[1];
+    config_file = "./config";
     count_lines(config_file, &g_ctx);
     
     init_ctx_common(&g_ctx, false); // false = consensus thread
@@ -42,7 +69,7 @@ int main(int argc, char *argv[])
 
     set_local_ib_connection(&g_ctx, false); // false = consensus thread
     
-    g_ctx.sockfd = malloc(g_ctx.num_clients * sizeof(g_ctx.sockfd));
+    g_ctx.sockfd = (int*)malloc(g_ctx.num_clients * sizeof(g_ctx.sockfd));
 
     tcp_server_listen();
 
@@ -216,5 +243,11 @@ int main(int argc, char *argv[])
     for (int i = 0; i < g_ctx.num_clients; ++i) {
         close(g_ctx.sockfd[i]);
     }    
-    return 0;
+}
+
+}  // namespace
+
+int main(int argc, char **argv) {
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
 }

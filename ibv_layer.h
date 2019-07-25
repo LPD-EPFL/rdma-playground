@@ -1,12 +1,16 @@
 #ifndef IBV_LAYER_H
 #define IBV_LAYER_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include "utils.h"
 
 void set_local_ib_connection(struct global_context* ctx, bool is_le);
 void print_ib_connection(char *conn_name, struct ib_connection *conn);
 
-int tcp_exch_ib_connection_info();
+int tcp_exch_ib_connection_info(struct global_context* ctx);
 
 int qp_change_state_reset( struct qp_context *qpc );
 int qp_change_state_init(struct qp_context *qpc, int ib_port);
@@ -137,7 +141,7 @@ static int wait_for_n(int n, uint64_t round_nb, struct global_context* ctx, int 
             } else if (ret == WC_EXPECTED_ERROR) {
                 // TODO handle the error
                 cid = WRID_GET_CONN(wr_id);
-                qp_restart(ctx->qps[cid], ctx->ib_port);
+                qp_restart(&ctx->qps[cid], ctx->ib_port);
             } else { // unexpected error
                 die("Unexpected error while polling");
             }
@@ -197,5 +201,9 @@ post_send(  struct ibv_qp* qp,
     return rc;
 
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // IBV_LAYER_H

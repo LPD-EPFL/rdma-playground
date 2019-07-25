@@ -1,6 +1,8 @@
 CC=gcc
+CXX=g++
 CFLAGS=-Wall -g
-LDFLAGS= -lrdmacm -libverbs -pthread
+CXXFLAGS=-Wall -g -I$(GTEST_INCLUDE) 
+LDFLAGS=-L$(GTEST_LIB) -lgtest -lrdmacm -libverbs -pthread
 BIN=./bin/main
 
 # SOURCES    := ${wildcard *.c}
@@ -10,7 +12,7 @@ BIN=./bin/main
 
 .SUFFIXES: .c .o
 
-all: rdma-consensus
+all: tests
 
 # main:      $(OBJECTS)
 
@@ -18,12 +20,14 @@ all: rdma-consensus
 # 	$(CC) $(CFLAGS) ibv_layer.c -o ibv_layer.o $(LDFLAGS)
 
 rdma-consensus: 
-	$(CC) $(CFLAGS) ibv_layer.c  consensus-protocol.c rdma-consensus.c leader-election.c test.c -o $(BIN) $(LDFLAGS)
+	$(CC) $(CFLAGS) utils.c ibv_layer.c  consensus-protocol.c rdma-consensus.c leader-election.c test.c -o $(BIN) $(LDFLAGS)
 
-# .c.o:
-# 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
+tests:
+	$(CXX) $(CXXFLAGS) utils.c ibv_layer.c  consensus-protocol.c rdma-consensus.c leader-election.c tests.cpp  -o ./bin/tests $(LDFLAGS)
+# 	$(CXX) $(CXXFLAGS) tests.cpp  -o ./bin/tests $(LDFLAGS)
 
 
 
 clean:
 	-rm -fv *.o
+	-rm -fv ./bin/*

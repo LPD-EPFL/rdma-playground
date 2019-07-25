@@ -1,6 +1,10 @@
 #ifndef UTILS_H
 #define UTILS_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,7 +12,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <errno.h>
-#include <stdatomic.h>
+// #include <stdatomic.h>
 #include <pthread.h>
 
 
@@ -130,5 +134,11 @@ struct global_context {
     size_t                      len; 
     uint64_t                    *completed_ops;
 };
+
+struct global_context create_ctx(); 
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // UTILS_H

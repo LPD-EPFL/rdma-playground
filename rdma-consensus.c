@@ -8,7 +8,7 @@ extern struct global_context le_ctx;
 void count_lines(char* filename, struct global_context *ctx) {
     
     FILE * fp;
-    char * line = malloc(NI_MAXHOST * sizeof(char));
+    char * line = (char*)malloc(NI_MAXHOST * sizeof(char));
     size_t len = NI_MAXHOST * sizeof(char);
     ssize_t read;
 
@@ -44,7 +44,7 @@ void parse_config(char* filename, struct global_context *ctx) {
 
 
     FILE * fp;
-    char * line = malloc(NI_MAXHOST * sizeof(char));
+    char * line = (char*)malloc(NI_MAXHOST * sizeof(char));
     size_t len = NI_MAXHOST * sizeof(char);
     ssize_t read;
 
@@ -119,10 +119,11 @@ compare_to_self(struct ifaddrs *ifaddr, char *addr) {
 void tcp_client_connect()
 {
     struct addrinfo *res, *t;
-    struct addrinfo hints = {
-        .ai_family        = AF_UNSPEC,
-        .ai_socktype    = SOCK_STREAM
-    };
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family        = AF_UNSPEC;
+    hints.ai_socktype    = SOCK_STREAM;
+    
 
     char *service;
     // int sockfd = -1;
@@ -172,11 +173,11 @@ void tcp_client_connect()
  */
 void tcp_server_listen() {
     struct addrinfo *res;
-    struct addrinfo hints = {
-        .ai_flags        = AI_PASSIVE,
-        .ai_family        = AF_UNSPEC,
-        .ai_socktype    = SOCK_STREAM    
-    };
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_flags        = AI_PASSIVE;
+    hints.ai_family        = AF_UNSPEC;
+    hints.ai_socktype    = SOCK_STREAM;   
 
     char *service;
     int sockfd = -1;
@@ -224,11 +225,11 @@ void tcp_server_listen() {
 }
 
 void init_buf_le(struct global_context* ctx) {
-    le_ctx.buf.counter = malloc(sizeof(counter_t));
+    le_ctx.buf.counter = (counter_t*)malloc(sizeof(counter_t));
     memset(le_ctx.buf.counter, 0, sizeof(counter_t));
     le_ctx.len = sizeof(counter_t);
     for (int i = 0; i < ctx->num_clients; i++) {
-        ctx->qps[i].buf_copy.counter = malloc(sizeof(counter_t));
+        ctx->qps[i].buf_copy.counter = (counter_t*)malloc(sizeof(counter_t));
         memset(ctx->qps[i].buf_copy.counter, 0, sizeof(counter_t));
     }
 }
@@ -256,7 +257,7 @@ void init_ctx_common(struct global_context* ctx, bool is_le)
     void *write_buf;
     void *read_buf;
 
-    ctx->qps = malloc(ctx->num_clients * sizeof(struct qp_context));
+    ctx->qps = (struct qp_context*)malloc(ctx->num_clients * sizeof(struct qp_context));
     memset(ctx->qps, 0, ctx->num_clients * sizeof(struct qp_context));    
 
     if (is_le) {
@@ -265,7 +266,7 @@ void init_ctx_common(struct global_context* ctx, bool is_le)
         init_buf_consensus(ctx);
     }
 
-    ctx->completed_ops = malloc(ctx->num_clients * sizeof(uint64_t));
+    ctx->completed_ops = (uint64_t*)malloc(ctx->num_clients * sizeof(uint64_t));
     memset(ctx->completed_ops, 0, ctx->num_clients * sizeof(uint64_t));
 
     if (ctx->ib_dev == NULL) {
@@ -312,18 +313,16 @@ void init_ctx_common(struct global_context* ctx, bool is_le)
                         IBV_ACCESS_LOCAL_WRITE),
                     "Could not allocate mr, ibv_reg_mr. Do you have root access?");
 
-        struct ibv_qp_init_attr qp_init_attr = {
-            .send_cq = ctx->cq,
-            .recv_cq = ctx->cq,
-            .qp_type = IBV_QPT_RC,
-            .cap = {
-                .max_send_wr = ctx->tx_depth,
-                .max_recv_wr = 1,
-                .max_send_sge = 1,
-                .max_recv_sge = 1,
-                .max_inline_data = 0
-            }
-        };
+        struct ibv_qp_init_attr qp_init_attr;
+        memset(&qp_init_attr, 0, sizeof(qp_init_attr));
+        qp_init_attr.send_cq = ctx->cq;
+        qp_init_attr.recv_cq = ctx->cq;
+        qp_init_attr.qp_type = IBV_QPT_RC;
+        qp_init_attr.cap.max_send_wr = ctx->tx_depth;
+        qp_init_attr.cap.max_recv_wr = 1;
+        qp_init_attr.cap.max_send_sge = 1;
+        qp_init_attr.cap.max_recv_sge = 1;
+        qp_init_attr.cap.max_inline_data = 0;
 
         TEST_Z(ctx->qps[i].qp = ibv_create_qp(ctx->pd, &qp_init_attr),
                 "Could not create queue pair, ibv_create_qp");    

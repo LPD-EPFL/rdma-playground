@@ -1,6 +1,10 @@
 #ifndef RDMA_CONSENSUS_H
 #define RDMA_CONSENSUS_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE 1
 #endif
@@ -30,5 +34,9 @@ void init_ctx_common(struct global_context* ctx, bool is_le);
 void init_buf_le(struct global_context* ctx);
 void init_buf_consensus(struct global_context* ctx);
 void destroy_ctx(struct global_context* ctx, bool is_le);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // RDMA_CONSENSUS_H
