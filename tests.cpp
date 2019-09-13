@@ -1,6 +1,7 @@
 #include "rdma-consensus.h"
 
 #include "gtest/gtest.h"
+#include <string>
 
 #define NB_ITERATIONS 10000
 
@@ -16,77 +17,105 @@ extern struct global_context g_ctx;
 
 namespace {
 
+std::string error_details(std::string reason) {
+    return ((std::string)"Err: ") + strerror(errno) + " " + reason;
+}
+
+bool isValidIpAddress(char *ipAddress) {
+    struct sockaddr_in sa;
+    int result = inet_pton(AF_INET, ipAddress, &(sa.sin_addr));
+    return result != 0;
+}
+
+class Environment : public ::testing::Environment {
+    public:
+    virtual ~Environment() {}
+
+    // Override this to define how to set up the environment.
+    void SetUp() override {
+
+        printf("Setup\n");
+        pid = getpid();
+
+        g_ctx = create_ctx();
+
+        EXPECT_NE(pid, 0);
+        EXPECT_NE(g_ctx.port, 0);
+        EXPECT_NE(g_ctx.ib_port, 0);
+        EXPECT_EQ(g_ctx.len, 0);
+        EXPECT_NE(g_ctx.tx_depth, 0);
+        EXPECT_NE(sl, 0);
+
+        printf("PID=%d | port=%d | ib_port=%d | size=%lu | tx_depth=%d | sl=%d |\n",
+            pid, g_ctx.port, g_ctx.ib_port, g_ctx.len, g_ctx.tx_depth, sl);
+
+        // Is later needed to create random number for psn
+        srand48(pid * time(NULL));
+        
+        page_size = sysconf(_SC_PAGESIZE);
+
+        config_file = "./config";
+        count_lines(config_file, &g_ctx);
+        EXPECT_GT(g_ctx.num_clients, 0);
+        
+        init_ctx_common(&g_ctx, false); // false = consensus thread
+
+        parse_config(config_file, &g_ctx);
+
+        EXPECT_TRUE(isValidIpAddress(g_ctx.qps[0].ip_address));
+        EXPECT_TRUE(isValidIpAddress(g_ctx.qps[1].ip_address));
+        // printf("Current ip addresses before set local ib connection %s %s\n", g_ctx.qps[0].ip_address, g_ctx.qps[1].ip_address);
+
+        set_local_ib_connection(&g_ctx, false); // false = consensus thread
+        
+        g_ctx.sockfd = (int*)malloc(g_ctx.num_clients * sizeof(g_ctx.sockfd));
+
+        tcp_server_listen();
+
+        // TODO maybe sleep here
+        tcp_client_connect();
+
+        ASSERT_EQ(tcp_exch_ib_connection_info(&g_ctx), 0) << error_details(
+                "Could not exchange connection, tcp_exch_ib_connection");
+
+        // Print IB-connection details
+        printf("Consensus thread connections:\n");
+        for (int i = 0; i < g_ctx.num_clients; ++i) {
+            print_ib_connection("Local  Connection", &g_ctx.qps[i].local_connection);
+            print_ib_connection("Remote Connection", &g_ctx.qps[i].remote_connection);    
+        }
+    }
+
+    // Override this to define how to tear down the environment.
+    void TearDown() override {
+        printf("Destroying IB context\n");
+        destroy_ctx(&g_ctx, false);
+
+        int maxrecvsize = 100;
+        char buf[maxrecvsize];
+        
+        printf("Closing socket\n");
+        for (int i = 0; i < g_ctx.num_clients; ++i) {
+            if (i < g_ctx.my_index) { // I initiated this connection
+                // do nothing
+            } else { // I accepted this connection
+                // wait for client to disconnect
+                while (recv(g_ctx.sockfd[i], buf, maxrecvsize, 0) > 0) {}
+            }
+            shutdown(g_ctx.sockfd[i], SHUT_RDWR);
+            close(g_ctx.sockfd[i]);
+        }
+    }
+};
 
 
 TEST(RDMATest, HelloWorld) {
   //empty
 }
 
-TEST(RDMATest, InitStruct) {
-  struct global_context g_ctx;
-  g_ctx.ib_dev             = NULL;
-  g_ctx.context            = NULL;
-  g_ctx.pd                 = NULL;
-  g_ctx.cq                 = NULL;
-  g_ctx.ch                 = NULL;
-  g_ctx.qps                = NULL;
-  g_ctx.round_nb           = 0;
-  g_ctx.num_clients        = 0;
-  g_ctx.port               = 18515;
-  g_ctx.ib_port            = 1;
-  g_ctx.tx_depth           = 100;
-  g_ctx.servername         = NULL;
-  g_ctx.buf.log            = NULL;
-  g_ctx.len                = 0;
-  g_ctx.completed_ops      = NULL;
-}
-
-TEST(RDMATest, BigTest) {
-    pid = getpid();
-
-    g_ctx = create_ctx();
 
 
-    if(!g_ctx.servername){
-        // Print app parameters. This is basically from rdma_bw app. Most of them are not used atm
-        printf("PID=%d | port=%d | ib_port=%d | size=%lu | tx_depth=%d | sl=%d |\n",
-            pid, g_ctx.port, g_ctx.ib_port, g_ctx.len, g_ctx.tx_depth, sl);
-    }
-
-    // Is later needed to create random number for psn
-    srand48(pid * time(NULL));
-    
-    page_size = sysconf(_SC_PAGESIZE);
-
-    config_file = "./config";
-    count_lines(config_file, &g_ctx);
-    
-    init_ctx_common(&g_ctx, false); // false = consensus thread
-
-    parse_config(config_file, &g_ctx);
-
-    printf("Current ip addresses before set local ib connection %s %s\n", g_ctx.qps[0].ip_address, g_ctx.qps[1].ip_address);
-
-    set_local_ib_connection(&g_ctx, false); // false = consensus thread
-    
-    g_ctx.sockfd = (int*)malloc(g_ctx.num_clients * sizeof(g_ctx.sockfd));
-
-    tcp_server_listen();
-
-    // TODO maybe sleep here
-    tcp_client_connect();
-
-
-    TEST_NZ(tcp_exch_ib_connection_info(&g_ctx),
-            "Could not exchange connection, tcp_exch_ib_connection");
-
-    // Print IB-connection details
-    printf("Consensus thread connections:\n");
-    for (int i = 0; i < g_ctx.num_clients; ++i) {
-        print_ib_connection("Local  Connection", &g_ctx.qps[i].local_connection);
-        print_ib_connection("Remote Connection", &g_ctx.qps[i].remote_connection);    
-    }
-    
+TEST(RDMATest, BigTest) {    
     // spawn_leader_election_thread();
 
     for (int i = 0; i < g_ctx.num_clients; ++i) {
@@ -236,18 +265,13 @@ TEST(RDMATest, BigTest) {
     printf("Going to sleep after consensus\n");
     sleep(15);
     
-    printf("Destroying IB context\n");
-    destroy_ctx(&g_ctx, false);
     
-    printf("Closing socket\n");
-    for (int i = 0; i < g_ctx.num_clients; ++i) {
-        close(g_ctx.sockfd[i]);
-    }    
 }
 
 }  // namespace
 
 int main(int argc, char **argv) {
-  ::testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
+    ::testing::InitGoogleTest(&argc, argv);
+    AddGlobalTestEnvironment(new Environment);
+    return RUN_ALL_TESTS();
 }

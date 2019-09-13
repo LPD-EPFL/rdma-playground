@@ -128,10 +128,12 @@ struct global_context {
     
     union {
         log_t *log;
-        counter_t *counter;
+        le_data_t *le_data;
     } buf;
 
-    size_t                      len; 
+    // add here a message buffer from which to write messages to others (for permissions)
+
+    size_t                      len; // length of buf in bytes (used when registering MRs)
     uint64_t                    *completed_ops;
 };
 

@@ -29,7 +29,7 @@ void set_local_ib_connection(struct global_context* ctx, bool is_le){
         ctx->qps[i].local_connection.lid = attr.lid;
         ctx->qps[i].local_connection.psn = lrand48() & 0xffffff;
         if (is_le) {
-            ctx->qps[i].local_connection.vaddr = (uintptr_t)ctx->buf.counter;
+            ctx->qps[i].local_connection.vaddr = (uintptr_t)ctx->buf.le_data;
         } else {
             ctx->qps[i].local_connection.vaddr = (uintptr_t)ctx->buf.log;
         }

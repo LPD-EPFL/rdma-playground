@@ -10,14 +10,16 @@ outer_loop(log_t *log) {
     uint64_t propNr;
     // while (true) {
         // wait until I am leader
-        while (leader != g_ctx.my_index) {
-            nanosleep((const struct timespec[]){{0, SHORT_SLEEP_DURATION_NS}}, NULL);
-        }
-        // get permissions
-        // bring followers up to date with me
-        update_followers();
-        propNr = 1; // choose number higher than any proposal number seen before
-        inner_loop(log, propNr);
+    while (leader != g_ctx.my_index) {
+        nanosleep((const struct timespec[]){{0, SHORT_SLEEP_DURATION_NS}}, NULL);
+        // check for messages - if received permission change, do it
+        // check for stop condition
+    }
+    // get permissions - send messages
+    // bring followers up to date with me
+    update_followers();
+    propNr = 1; // choose number higher than any proposal number seen before
+    inner_loop(log, propNr);
     // }
 }
 

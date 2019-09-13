@@ -197,7 +197,8 @@ void tcp_server_listen() {
     TEST_N(sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol),
                 "Could not create server socket");
     
-    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &n, sizeof n);
+    int option = 1;
+    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option));
 
     TEST_N(bind(sockfd,res->ai_addr, res->ai_addrlen),
             "Could not bind addr to socket"); 
@@ -225,9 +226,12 @@ void tcp_server_listen() {
 }
 
 void init_buf_le(struct global_context* ctx) {
-    le_ctx.buf.counter = (counter_t*)malloc(sizeof(counter_t));
-    memset(le_ctx.buf.counter, 0, sizeof(counter_t));
-    le_ctx.len = sizeof(counter_t);
+    // initializing the main buf in global_context
+    ctx->buf.le_data = le_data_new(ctx->num_clients+1); // +1 because num_clients is the number of processes -1
+    ctx->len = le_data_size(ctx->buf.le_data);
+
+
+    // initializing the buf_copy's in each qp_context
     for (int i = 0; i < ctx->num_clients; i++) {
         ctx->qps[i].buf_copy.counter = (counter_t*)malloc(sizeof(counter_t));
         memset(ctx->qps[i].buf_copy.counter, 0, sizeof(counter_t));
@@ -300,7 +304,7 @@ void init_ctx_common(struct global_context* ctx, bool is_le)
 
     for (int i = 0; i < ctx->num_clients; i++) {
         if (is_le) {
-           write_buf = (void*)ctx->buf.counter;
+           write_buf = (void*)ctx->buf.le_data;
            read_buf = (void*)ctx->qps[i].buf_copy.counter;
         } else {
            write_buf = (void*)ctx->buf.log;
@@ -308,10 +312,10 @@ void init_ctx_common(struct global_context* ctx, bool is_le)
         }
         TEST_Z(ctx->qps[i].mr_write = ibv_reg_mr(ctx->pd, write_buf, ctx->len, 
                         IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE),
-                    "Could not allocate mr, ibv_reg_mr. Do you have root access?");
+                    "Could not allocate mr_write, ibv_reg_mr. Do you have root access?");
         TEST_Z(ctx->qps[i].mr_read = ibv_reg_mr(ctx->pd, read_buf, ctx->len, 
                         IBV_ACCESS_LOCAL_WRITE),
-                    "Could not allocate mr, ibv_reg_mr. Do you have root access?");
+                    "Could not allocate mr_read, ibv_reg_mr. Do you have root access?");
 
         struct ibv_qp_init_attr qp_init_attr;
         memset(&qp_init_attr, 0, sizeof(qp_init_attr));
@@ -360,7 +364,7 @@ void destroy_ctx(struct global_context* ctx, bool is_le){
             "Could not deallocate protection domain, ibv_dealloc_pd");    
     
     if (is_le) {
-        free(ctx->buf.counter);
+        le_data_free(ctx->buf.le_data);
     } else {
         log_free(ctx->buf.log);
     }

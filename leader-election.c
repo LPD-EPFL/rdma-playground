@@ -64,7 +64,7 @@ leader_election(void* arg) {
     int i=0;
     while (i++ < 10) {
         // increment a local counter
-        le_ctx.buf.counter->count_cur++;
+        le_ctx.buf.le_data->counters.count_cur++;
         // read (RDMA) counters of everyone*
         rdma_read_all_counters();
         // figure out who is leader
@@ -99,11 +99,12 @@ rdma_read_all_counters() {
 
     for (int i = 0; i < le_ctx.num_clients; ++i) {
 
+        // we are reading just the first counter (count_cur)
         local_address = le_ctx.qps[i].buf_copy.counter;
         req_size = sizeof(uint64_t);
 
         WRID_SET_CONN(wrid, i);
-        remote_addr = le_ctx.qps[i].remote_connection.vaddr;
+        remote_addr = le_ctx.qps[i].remote_connection.vaddr; // remote offset = 0; we are reading the first word = count_cur
         post_send(le_ctx.qps[i].qp, local_address, req_size, le_ctx.qps[i].mr_read->lkey, le_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_READ, wrid, true);
     }
 
@@ -138,4 +139,25 @@ decide_leader() {
     // return myself (no smaller id incremented their counter)
     printf("I am the leader\n");
     return le_ctx.my_index;
+}
+
+void
+rdma_ask_permission(le_data* le_data, uint64_t my_index, bool signaled) {
+
+    void* local_address;
+    uint64_t remote_addr;
+    size_t req_size;
+    uint64_t wrid = 0;
+
+    local_address = &le_data->perm_reqs[my_index];
+    req_size = sizeof(uint8_t);
+
+    g_ctx.round_nb++;
+    WRID_SET_SSN(wrid, le_ctx.round_nb);
+    for (int i = 0; i < le_ctx.num_clients; ++i) {
+
+        WRID_SET_CONN(wrid, i);
+        remote_addr = le_data_get_remote_address(le_data, local_address, ((le_data_t*)le_ctx.qps[i].remote_connection.vaddr));
+        post_send(le_ctx.qps[i].qp, local_address, req_size, le_ctx.qps[i].mr_write->lkey, le_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, wrid, signaled);
+    }
 }

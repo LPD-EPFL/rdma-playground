@@ -35,8 +35,49 @@ struct counter {
 };
 typedef struct counter counter_t;
 
+struct le_data {
+    counter_t counters;
+    uint64_t len; // nb of entries in perm_reqs
+    uint8_t perm_reqs[0];
+};
+typedef struct le_data le_data_t;
+
+// LE_DATA
 /* ================================================================== */
 
+static le_data_t* 
+le_data_new(uint64_t len) {
+    le_data_t *le_data = (le_data_t*) malloc(sizeof(le_data_t) + len);
+    if (NULL == le_data) {
+        return NULL;
+    }
+
+    memset(le_data, 0, sizeof(le_data_t) + len);
+    le_data->len = len;
+
+    return le_data;
+}
+
+static void 
+le_data_free( le_data_t* le_data ) {
+    if (NULL != le_data) {
+        free(le_data);
+        le_data = NULL;
+    }
+}
+
+static size_t
+le_data_size( le_data_t* le_data) {
+    return (sizeof(le_data_t) + le_data->len);
+}
+
+static uint64_t
+le_data_get_remote_address(le_data_t* local_le_data, void* local_offset, le_data_t* remote_le_data) {
+    return (uint64_t)remote_le_data + ((uint64_t)local_offset - (uint64_t)local_le_data);
+}
+
+// LOG
+/* ================================================================== */
 
 // Allocates and initializes a log
 // len = the size in bytes to allocate for slots

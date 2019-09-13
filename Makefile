@@ -1,7 +1,7 @@
 CC=gcc
 CXX=g++
 CFLAGS=-Wall -g
-CXXFLAGS=-Wall -g -I$(GTEST_INCLUDE) 
+CXXFLAGS=-Wall -Wno-unused-function -g -I$(GTEST_INCLUDE) 
 LDFLAGS=-L$(GTEST_LIB) -lgtest -lrdmacm -libverbs -pthread
 BIN=./bin/main
 
@@ -19,7 +19,7 @@ all: tests
 # ibv_layer:
 # 	$(CC) $(CFLAGS) ibv_layer.c -o ibv_layer.o $(LDFLAGS)
 
-rdma-consensus: 
+rdma-consensus: 		
 	$(CC) $(CFLAGS) utils.c ibv_layer.c  consensus-protocol.c rdma-consensus.c leader-election.c test.c -o $(BIN) $(LDFLAGS)
 
 tests:
