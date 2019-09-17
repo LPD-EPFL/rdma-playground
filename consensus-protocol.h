@@ -7,6 +7,7 @@ extern "C" {
 
 #include "utils.h"
 #include "ibv_layer.h"
+#include "leader-election.h"
 
 void outer_loop(log_t *log);
 void inner_loop(log_t *log, uint64_t propNr);

@@ -302,17 +302,33 @@ void init_ctx_common(struct global_context* ctx, bool is_le)
     TEST_Z(ctx->cq = ibv_create_cq(ctx->context,ctx->tx_depth, NULL,  ctx->ch, 0),
                 "Could not create completion queue, ibv_create_cq"); 
 
+    if (!is_le) {
+        ctx->cur_write_permission = 0; // initially only process 0 has write accesss
+    }
+
     for (int i = 0; i < ctx->num_clients; i++) {
         if (is_le) {
-           write_buf = (void*)ctx->buf.le_data;
-           read_buf = (void*)ctx->qps[i].buf_copy.counter;
+            write_buf = (void*)ctx->buf.le_data;
+            read_buf = (void*)ctx->qps[i].buf_copy.counter;
+            // create the MR that we write from and others write into
+            TEST_Z(ctx->qps[i].mr_write = ibv_reg_mr(ctx->pd, write_buf, ctx->len, 
+                            IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE),
+                        "Could not allocate mr_write, ibv_reg_mr. Do you have root access?");
         } else {
            write_buf = (void*)ctx->buf.log;
            read_buf = (void*)ctx->qps[i].buf_copy.log;
+
+           // give read-write access to 0 and read-only access to everybody else (initially) 
+           int flags = (i == 0) ? (IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE) 
+                            : (IBV_ACCESS_REMOTE_READ  | IBV_ACCESS_LOCAL_WRITE);
+            // create the MR that we write from and others write into
+            TEST_Z(ctx->qps[i].mr_write = ibv_reg_mr(ctx->pd, write_buf, ctx->len, 
+                            flags),
+                        "Could not allocate mr_write, ibv_reg_mr. Do you have root access?");
+
         }
-        TEST_Z(ctx->qps[i].mr_write = ibv_reg_mr(ctx->pd, write_buf, ctx->len, 
-                        IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE),
-                    "Could not allocate mr_write, ibv_reg_mr. Do you have root access?");
+
+        // create the MR that we read into
         TEST_Z(ctx->qps[i].mr_read = ibv_reg_mr(ctx->pd, read_buf, ctx->len, 
                         IBV_ACCESS_LOCAL_WRITE),
                     "Could not allocate mr_read, ibv_reg_mr. Do you have root access?");

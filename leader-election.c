@@ -71,6 +71,10 @@ leader_election(void* arg) {
         // and communicate the leader to the main thread
         leader = decide_leader();
 
+        // while LE_SLEEP_DURATION_NS has not elapsed:
+        // check and grant permission requests
+        check_permission_requests();
+
         // sleep
         nanosleep((const struct timespec[]){{0, LE_SLEEP_DURATION_NS}}, NULL);
     }
@@ -149,10 +153,12 @@ rdma_ask_permission(le_data* le_data, uint64_t my_index, bool signaled) {
     size_t req_size;
     uint64_t wrid = 0;
 
+    le_data->perm_reqs[my_index] = 1; // I want to get permission for myself
+
     local_address = &le_data->perm_reqs[my_index];
     req_size = sizeof(uint8_t);
 
-    g_ctx.round_nb++;
+    le_ctx.round_nb++;
     WRID_SET_SSN(wrid, le_ctx.round_nb);
     for (int i = 0; i < le_ctx.num_clients; ++i) {
 
@@ -160,4 +166,35 @@ rdma_ask_permission(le_data* le_data, uint64_t my_index, bool signaled) {
         remote_addr = le_data_get_remote_address(le_data, local_address, ((le_data_t*)le_ctx.qps[i].remote_connection.vaddr));
         post_send(le_ctx.qps[i].qp, local_address, req_size, le_ctx.qps[i].mr_write->lkey, le_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, wrid, signaled);
     }
+
+    nanosleep((const struct timespec[]){{0, SHORT_SLEEP_DURATION_NS}}, NULL);
+
+    struct ibv_wc wc_array[le_ctx.num_clients];
+
+    wait_for_n(1, le_ctx.round_nb, &le_ctx, le_ctx.num_clients, wc_array, le_ctx.completed_ops);
+}
+
+void
+check_permission_requests() {
+    int j;
+    // loop over local perm_reqs
+    for (int i = 0; i < le_ctx.buf.le_data->len; ++i) {
+        if (i == le_ctx.my_index) continue;
+
+        if (le_ctx.buf.le_data->perm_reqs[i]) { // there is a request from i
+            // change permission on g_ctx
+
+            j = (i < le_ctx.my_index) ? i : i-1; // i indexes into perm_reqs (n entries total), j indexes into qps (n-1 entries total)
+            permission_switch(g_ctx.qps[g_ctx.cur_write_permission].mr_write, // mr losing permission
+                              g_ctx.qps[j].mr_write, // mr gaining permission
+                              g_ctx.pd,
+                              g_ctx.buf.log,
+                              g_ctx.len,
+                              (IBV_ACCESS_REMOTE_READ  | IBV_ACCESS_LOCAL_WRITE),
+                              (IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE));
+            g_ctx.cur_write_permission = j; 
+
+        }
+    }
+    // if 1, set to 0 and switch permissions accordingly
 }

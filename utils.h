@@ -131,8 +131,7 @@ struct global_context {
         le_data_t *le_data;
     } buf;
 
-    // add here a message buffer from which to write messages to others (for permissions)
-
+    int                         cur_write_permission; // index of process who currently has write permission on my memory
     size_t                      len; // length of buf in bytes (used when registering MRs)
     uint64_t                    *completed_ops;
 };

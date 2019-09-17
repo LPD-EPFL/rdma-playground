@@ -3,6 +3,7 @@
 extern int leader;
 
 struct global_context g_ctx;
+extern struct global_context le_ctx;
 
 
 void
@@ -15,7 +16,8 @@ outer_loop(log_t *log) {
         // check for messages - if received permission change, do it
         // check for stop condition
     }
-    // get permissions - send messages
+    // get permissions (skip this step if this is the first iteration ever?) - send messages
+    rdma_ask_permission(le_ctx.buf.le_data, le_ctx.my_index, true);
     // bring followers up to date with me
     update_followers();
     propNr = 1; // choose number higher than any proposal number seen before
