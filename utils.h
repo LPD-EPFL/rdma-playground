@@ -27,8 +27,9 @@ extern "C" {
 
 #include "log.h"
 
-#define SHORT_SLEEP_DURATION_NS  10*1000 // 10 us = 10 * 1'000 ns
-#define LE_SLEEP_DURATION_NS     999*1000*1000 // 100 ms = 100 * 1'000'000 ns
+#define SHORT_SLEEP_DURATION_NS     10*1000 // 10 us = 10 * 1'000 ns
+#define LE_SLEEP_DURATION_NS        999*1000*1000 // 100 ms = 100 * 1'000'000 ns
+#define LE_COUNTER_READ_PERIOD_SEC  0.1 // 100 ms
 
 typedef enum {SLOT, MIN_PROPOSAL} write_location_t;
 

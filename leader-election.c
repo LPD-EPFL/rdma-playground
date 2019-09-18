@@ -1,4 +1,5 @@
 #include "leader-election.h"
+#include "barrier.h"
 
 struct global_context le_ctx;
 
@@ -6,6 +7,15 @@ struct global_context le_ctx;
 extern struct global_context g_ctx;
 extern char* config_file;
 extern int leader;
+extern barrier_t entry_barrier;
+extern barrier_t exit_barrier;
+
+#define TIMED_LOOP(duration)                                                \
+{   clock_t __begin = clock();                                              \
+    while (((double)(clock() - __begin) / CLOCKS_PER_SEC) < (duration)) { 
+
+#define TIMED_LOOP_END() }}
+        
 
 void
 spawn_leader_election_thread() {
@@ -56,9 +66,7 @@ leader_election(void* arg) {
         qp_change_state_rts(&le_ctx.qps[i], le_ctx.ib_port);
     }
 
-
-    printf("Going to sleep le\n");
-    sleep(5);
+    barrier_cross(&entry_barrier);
         
     // start the leader election loop
     int i=0;
@@ -73,13 +81,21 @@ leader_election(void* arg) {
 
         // while LE_SLEEP_DURATION_NS has not elapsed:
         // check and grant permission requests
+        TIMED_LOOP(LE_COUNTER_READ_PERIOD_SEC)
         check_permission_requests();
+        TIMED_LOOP_END()
+        // clock_t begin = clock();
+        // while (((double)(clock() - begin) / CLOCKS_PER_SEC) < LE_COUNTER_READ_PERIOD_SEC) {
+        //     check_permission_requests();
+        // }
 
         // sleep
-        nanosleep((const struct timespec[]){{0, LE_SLEEP_DURATION_NS}}, NULL);
+        // nanosleep((const struct timespec[]){{0, LE_SLEEP_DURATION_NS}}, NULL);
     }
 
     destroy_ctx(&le_ctx, true);
+    
+    barrier_cross(&exit_barrier);
     pthread_exit(NULL);   
 }
 
@@ -158,8 +174,8 @@ rdma_ask_permission(le_data* le_data, uint64_t my_index, bool signaled) {
     local_address = &le_data->perm_reqs[my_index];
     req_size = sizeof(uint8_t);
 
-    le_ctx.round_nb++;
-    WRID_SET_SSN(wrid, le_ctx.round_nb);
+    g_ctx.round_nb++;
+    WRID_SET_SSN(wrid, g_ctx.round_nb);
     for (int i = 0; i < le_ctx.num_clients; ++i) {
 
         WRID_SET_CONN(wrid, i);
@@ -171,7 +187,7 @@ rdma_ask_permission(le_data* le_data, uint64_t my_index, bool signaled) {
 
     struct ibv_wc wc_array[le_ctx.num_clients];
 
-    wait_for_n(1, le_ctx.round_nb, &le_ctx, le_ctx.num_clients, wc_array, le_ctx.completed_ops);
+    wait_for_n(1, g_ctx.round_nb, &le_ctx, le_ctx.num_clients, wc_array, g_ctx.completed_ops);
 }
 
 void
@@ -181,9 +197,12 @@ check_permission_requests() {
     for (int i = 0; i < le_ctx.buf.le_data->len; ++i) {
         if (i == le_ctx.my_index) continue;
 
-        if (le_ctx.buf.le_data->perm_reqs[i]) { // there is a request from i
-            // change permission on g_ctx
+        if (le_ctx.buf.le_data->perm_reqs[i] == 1) { // there is a request from i
+            printf("Permission request from %d\n", i);
 
+            le_ctx.buf.le_data->perm_reqs[i] = 0;
+
+            // change permission on g_ctx
             j = (i < le_ctx.my_index) ? i : i-1; // i indexes into perm_reqs (n entries total), j indexes into qps (n-1 entries total)
             permission_switch(g_ctx.qps[g_ctx.cur_write_permission].mr_write, // mr losing permission
                               g_ctx.qps[j].mr_write, // mr gaining permission
@@ -196,5 +215,6 @@ check_permission_requests() {
 
         }
     }
-    // if 1, set to 0 and switch permissions accordingly
+    
+    // printf("Done checking permissions\n");
 }

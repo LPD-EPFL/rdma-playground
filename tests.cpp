@@ -1,4 +1,6 @@
 #include "rdma-consensus.h"
+#include "leader-election.h"
+#include "barrier.h"
 
 #include "gtest/gtest.h"
 #include <string>
@@ -14,6 +16,13 @@ char* config_file;
 int leader = 0;
 
 extern struct global_context g_ctx;
+extern struct global_context le_ctx;
+
+// barriers to synchronize with the leader election thread
+// entry_barrier syncs with the beginning of the leader election loop
+// exit_barrier syncs with the exit from the leader election thread
+barrier_t entry_barrier, exit_barrier;
+
 
 namespace {
 
@@ -84,6 +93,11 @@ class Environment : public ::testing::Environment {
             print_ib_connection("Local  Connection", &g_ctx.qps[i].local_connection);
             print_ib_connection("Remote Connection", &g_ctx.qps[i].remote_connection);    
         }
+
+        for (int i = 0; i < g_ctx.num_clients; ++i) {
+            qp_change_state_rts(&g_ctx.qps[i], g_ctx.ib_port);
+        }
+        printf("Main thred QPs changed to RTS mode\n");  
     }
 
     // Override this to define how to tear down the environment.
@@ -113,14 +127,52 @@ TEST(RDMATest, HelloWorld) {
   //empty
 }
 
+TEST(RDMATest, LeaderElectionCheckPermissions) {
+    barrier_init(&entry_barrier, 2);
+    barrier_init(&exit_barrier, 2);
 
+    spawn_leader_election_thread();
+
+    barrier_cross(&entry_barrier);
+    barrier_cross(&exit_barrier);
+}
+
+TEST(RDMATest, LeaderElectionAskPermission) {
+    barrier_init(&entry_barrier, 2);
+    barrier_init(&exit_barrier, 2);
+    spawn_leader_election_thread();
+
+    barrier_cross(&entry_barrier);
+
+    if (g_ctx.my_index == 0) {
+        printf("Asking for permission...\n");
+        rdma_ask_permission(le_ctx.buf.le_data, le_ctx.my_index, true);
+        sleep(1);
+        printf("Trying to write to 1 -> should succeed\n");
+        post_send(g_ctx.qps[0].qp, g_ctx.buf.log, sizeof(uint64_t), g_ctx.qps[0].mr_write->lkey, g_ctx.qps[0].remote_connection.rkey, g_ctx.qps[0].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
+        // check the CQ
+        sleep(1);
+        int ne;
+        struct ibv_wc wc;
+
+        do {
+            ne = ibv_poll_cq(g_ctx.cq, 1, &wc);
+
+            if (ne > 0) {
+                printf("Work completion with id %llu has status %s (%d) \n", wc.wr_id, ibv_wc_status_str(wc.status), wc.status);
+                sleep(1);
+            } else {
+                printf("ne was %d\n", ne);
+            }
+        } while(ne > 0);
+    }
+
+    barrier_cross(&exit_barrier);
+
+}
 
 TEST(RDMATest, BigTest) {    
-    // spawn_leader_election_thread();
-
-    for (int i = 0; i < g_ctx.num_clients; ++i) {
-        qp_change_state_rts(&g_ctx.qps[i], g_ctx.ib_port);
-    }  
+    // spawn_leader_election_thread(); 
         
     printf("Going to sleep before consensus\n");
     
