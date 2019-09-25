@@ -2,11 +2,12 @@
 #include "barrier.h"
 
 struct global_context le_ctx;
-
+volatile bool stop_le;
 
 extern struct global_context g_ctx;
 extern char* config_file;
 extern int leader;
+
 extern barrier_t entry_barrier;
 extern barrier_t exit_barrier;
 
@@ -70,7 +71,7 @@ leader_election(void* arg) {
         
     // start the leader election loop
     int i=0;
-    while (i++ < 10) {
+    while (!stop_le) {
         // increment a local counter
         le_ctx.buf.le_data->counters.count_cur++;
         // read (RDMA) counters of everyone*
@@ -81,13 +82,13 @@ leader_election(void* arg) {
 
         // while LE_SLEEP_DURATION_NS has not elapsed:
         // check and grant permission requests
-        TIMED_LOOP(LE_COUNTER_READ_PERIOD_SEC)
-        check_permission_requests();
-        TIMED_LOOP_END()
-        // clock_t begin = clock();
-        // while (((double)(clock() - begin) / CLOCKS_PER_SEC) < LE_COUNTER_READ_PERIOD_SEC) {
-        //     check_permission_requests();
-        // }
+        // TIMED_LOOP(LE_COUNTER_READ_PERIOD_SEC)
+        // check_permission_requests();
+        // TIMED_LOOP_END()
+        clock_t begin = clock();
+        while (((double)(clock() - begin) / CLOCKS_PER_SEC) < LE_COUNTER_READ_PERIOD_SEC) {
+            check_permission_requests();
+        }
 
         // sleep
         // nanosleep((const struct timespec[]){{0, LE_SLEEP_DURATION_NS}}, NULL);
@@ -161,6 +162,7 @@ decide_leader() {
     return le_ctx.my_index;
 }
 
+// TODO: we want this to also revoke the access of my current leader to my memory
 void
 rdma_ask_permission(le_data* le_data, uint64_t my_index, bool signaled) {
 

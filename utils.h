@@ -12,7 +12,6 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 #include <errno.h>
-// #include <stdatomic.h>
 #include <pthread.h>
 
 

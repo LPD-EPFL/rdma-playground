@@ -1,7 +1,7 @@
 CC=gcc
 CXX=g++
 CFLAGS=-Wall -g
-CXXFLAGS=-Wall -Wno-unused-function -g -I$(GTEST_INCLUDE) 
+CXXFLAGS=-Wall -Wno-unused-function -g -I$(GTEST_INCLUDE)
 LDFLAGS=-L$(GTEST_LIB) -lgtest -lrdmacm -libverbs -pthread
 BIN=./bin/main
 

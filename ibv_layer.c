@@ -196,6 +196,7 @@ int qp_change_state_rts(struct qp_context *qpc, int ib_port){
 int 
 qp_restart( struct qp_context *qpc, int ib_port) {    
 
+
     TEST_NZ(qp_change_state_reset(qpc),
         "Cannot move QP to reset state\n"); 
 

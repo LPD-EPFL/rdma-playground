@@ -17,6 +17,7 @@ int leader = 0;
 
 extern struct global_context g_ctx;
 extern struct global_context le_ctx;
+extern volatile bool stop_le;
 
 // barriers to synchronize with the leader election thread
 // entry_barrier syncs with the beginning of the leader election loop
@@ -131,24 +132,28 @@ TEST(RDMATest, LeaderElectionCheckPermissions) {
     barrier_init(&entry_barrier, 2);
     barrier_init(&exit_barrier, 2);
 
+    stop_le = false;
     spawn_leader_election_thread();
 
     barrier_cross(&entry_barrier);
+    sleep(5);
+    stop_le = true;
     barrier_cross(&exit_barrier);
 }
 
 TEST(RDMATest, LeaderElectionAskPermission) {
     barrier_init(&entry_barrier, 2);
     barrier_init(&exit_barrier, 2);
+    stop_le = false;
     spawn_leader_election_thread();
 
     barrier_cross(&entry_barrier);
 
-    if (g_ctx.my_index == 0) {
+    if (g_ctx.my_index == 1) {
         printf("Asking for permission...\n");
         rdma_ask_permission(le_ctx.buf.le_data, le_ctx.my_index, true);
-        sleep(1);
-        printf("Trying to write to 1 -> should succeed\n");
+        // sleep(1);
+        printf("1 trying to write to 0 -> should succeed\n");
         post_send(g_ctx.qps[0].qp, g_ctx.buf.log, sizeof(uint64_t), g_ctx.qps[0].mr_write->lkey, g_ctx.qps[0].remote_connection.rkey, g_ctx.qps[0].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
         // check the CQ
         sleep(1);
@@ -165,10 +170,54 @@ TEST(RDMATest, LeaderElectionAskPermission) {
                 printf("ne was %d\n", ne);
             }
         } while(ne > 0);
+    } else if (g_ctx.my_index == 0) {
+        sleep(2);
+        printf("0 trying to write to 1 -> should succeed\n");
+        post_send(g_ctx.qps[0].qp, g_ctx.buf.log, sizeof(uint64_t), g_ctx.qps[0].mr_write->lkey, g_ctx.qps[0].remote_connection.rkey, g_ctx.qps[0].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
+        printf("0 trying to write to 2 -> should not succeed\n");
+        post_send(g_ctx.qps[1].qp, g_ctx.buf.log, sizeof(uint64_t), g_ctx.qps[1].mr_write->lkey, g_ctx.qps[1].remote_connection.rkey, g_ctx.qps[1].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 43, true);
+
+        // check the CQ
+        sleep(1);
+        int ne;
+        struct ibv_wc wc;
+
+        do {
+            ne = ibv_poll_cq(g_ctx.cq, 1, &wc);
+
+            if (ne > 0) {
+                printf("Work completion with id %llu has status %s (%d) \n", wc.wr_id, ibv_wc_status_str(wc.status), wc.status);
+                sleep(1);
+            } else {
+                printf("ne was %d\n", ne);
+            }
+        } while(ne > 0);
+    } else {
+        sleep(5);
     }
 
+    stop_le = true;
     barrier_cross(&exit_barrier);
 
+}
+
+TEST(RDMATest, DetectLeaderFailure) {
+    barrier_init(&entry_barrier, 2);
+    barrier_init(&exit_barrier, 2);
+
+    stop_le = false;
+    spawn_leader_election_thread();
+
+    barrier_cross(&entry_barrier);
+    sleep(1);
+    if (g_ctx.my_index != 0) {
+        sleep(3);
+        stop_le = true;
+    } else {
+        stop_le = true;
+        sleep(3);
+    }
+    barrier_cross(&exit_barrier);    
 }
 
 TEST(RDMATest, BigTest) {    
