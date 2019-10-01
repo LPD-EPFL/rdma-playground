@@ -9,18 +9,18 @@ extern "C" {
 #include "ibv_layer.h"
 #include "leader-election.h"
 
-void outer_loop(log_t *log);
-void inner_loop(log_t *log, uint64_t propNr);
-int write_log_slot(log_t* log, uint64_t offset, uint64_t propNr, value_t* value);
-int write_min_proposal(log_t* log, uint64_t propNr);
+bool propose(uint64_t value);
+bool propose_inner(uint64_t value);
+int update_followers();
+bool min_proposal_ok();
+int write_log_slot(log_t* log, uint64_t offset, value_t* value);
+void write_min_proposal(log_t* log);
 int read_min_proposals();
-void copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size);
-void update_followers();
-value_t* freshest_accepted_value(uint64_t offset);
-void wait_for_majority();
-void wait_for_all(); 
+int copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size);
 void rdma_write_to_all(log_t* log, uint64_t offset, write_location_t type, bool signaled);
-bool min_proposal_ok(uint64_t propNr);
+value_t* freshest_accepted_value(uint64_t offset);
+int wait_for_majority();
+int wait_for_all(); 
 
 #ifdef __cplusplus
 }

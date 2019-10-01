@@ -111,16 +111,22 @@ handle_work_completion( struct ibv_wc *wc )
 // cq = the completion queue to poll from
 // num_entries = maximum number of entries to poll from cq
 // wc_array = a pre-allocated array to store the polled work completions 
-// Returns:
-static int wait_for_n(int n, uint64_t round_nb, struct global_context* ctx, int num_entries, struct ibv_wc *wc_array, uint64_t* completed_ops) {
+// Returns: 0 on success, 1 on non-fatal failure, -1 on fatal failure
+static int wait_for_n_inner(  int n, 
+                        uint64_t round_nb, 
+                        struct global_context* ctx, 
+                        int num_entries, 
+                        struct ibv_wc *wc_array, 
+                        uint64_t* completed_ops ) {
     int success_count = 0;
+    int completion_count = 0;
     int ne = 0;
     int i;
     int ret;
     uint64_t wr_id;
     int cid;
 
-    while (success_count < n) {
+    while (completion_count < n) {
         // poll
         ne = ibv_poll_cq(ctx->cq, num_entries, wc_array);
 
@@ -128,7 +134,10 @@ static int wait_for_n(int n, uint64_t round_nb, struct global_context* ctx, int 
         // check what was polled
         for (i = 0; i < ne; i++) {
             wr_id = wc_array[i].wr_id;
-            // split wr_id into relevant fields
+
+            if (WRID_GET_SSN(wr_id) == round_nb) {
+                completion_count++;
+            }
 
             ret = handle_work_completion(&wc_array[i]);
             if (ret == WC_SUCCESS) {
@@ -139,20 +148,44 @@ static int wait_for_n(int n, uint64_t round_nb, struct global_context* ctx, int 
                 }
 
             } else if (ret == WC_EXPECTED_ERROR) {
-                // TODO handle the error
+                if (wc_array[i].opcode == IBV_WC_RDMA_READ) {
+                    // didn't manage to read due to permissions -> problem
+                    return -1;
+                }
                 cid = WRID_GET_CONN(wr_id);
                 qp_restart(&ctx->qps[cid], ctx->ib_port);
             } else { // unexpected error
-                die("Unexpected error while polling");
+                return -1;
             }
         }
     }
 
-    return ret;
+    if (success_count >= n) {
+        return 0; // success
+    } else {
+        return 1;
+    }
 }
 
+static int wait_for_n(  int n, 
+                        uint64_t round_nb, 
+                        struct global_context* ctx, 
+                        int num_entries, 
+                        struct ibv_wc *wc_array, 
+                        uint64_t* completed_ops ) {
+
+    int rc = wait_for_n_inner(n, round_nb, ctx, num_entries, wc_array, completed_ops);
+    
+    if (rc < 0) { // unexpected error, shutdown
+        // die
+    }
+
+    return rc;
+}
+
+
 static int
-post_send(  struct ibv_qp* qp,
+post_send_inner(  struct ibv_qp* qp,
             void* buf,
             uint32_t len,
             uint32_t lkey,
@@ -200,6 +233,23 @@ post_send(  struct ibv_qp* qp,
 
     return rc;
 
+}
+
+static void
+post_send(  struct ibv_qp* qp,
+            void* buf,
+            uint32_t len,
+            uint32_t lkey,
+            uint32_t rkey,
+            uint64_t remote_addr,
+            enum ibv_wr_opcode opcode,
+            uint64_t wrid,
+            bool signaled   ) {
+    
+    int rc = post_send_inner(qp, buf, len, lkey, rkey, remote_addr, opcode, wrid, signaled);
+    if (rc) { // there was a problem
+        // die
+    }
 }
 
 #ifdef __cplusplus

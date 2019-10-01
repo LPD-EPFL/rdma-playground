@@ -6,70 +6,91 @@ struct global_context g_ctx;
 extern struct global_context le_ctx;
 
 
-void
-outer_loop(log_t *log) {
-    uint64_t propNr;
-    // while (true) {
-        // wait until I am leader
-    while (leader != g_ctx.my_index) {
-        nanosleep((const struct timespec[]){{0, SHORT_SLEEP_DURATION_NS}}, NULL);
-        // check for messages - if received permission change, do it
-        // check for stop condition
+bool need_prepare_phase = true;
+bool need_init = true;
+uint64_t g_prop_nr = g_ctx.my_index + g_ctx.num_clients + 1;
+
+bool
+propose(uint64_t value) {
+    int rc;
+    bool done = false;
+
+    while (!done) {
+        if (leader != g_ctx.my_index) {
+            return false;
+        }
+
+        if (need_init) {
+            rdma_ask_permission(le_ctx.buf.le_data, le_ctx.my_index, true); // should always succeed
+
+            rc = update_followers();
+            if (rc) continue;
+
+            need_init = false;            
+        }
+
+        done = propose_inner(value);
     }
-    // get permissions (skip this step if this is the first iteration ever?) - send messages
-    rdma_ask_permission(le_ctx.buf.le_data, le_ctx.my_index, true);
-    // bring followers up to date with me
-    update_followers();
-    propNr = 1; // choose number higher than any proposal number seen before
-    inner_loop(log, propNr);
-    // }
+
+    return true;
 }
 
-void
-inner_loop(log_t *log, uint64_t propNr) {
+bool
+propose_inner(uint64_t value) {
+    int rc;
+    bool inner_done = false;
     uint64_t offset = 0;
     value_t* v;
 
-    bool needPreparePhase = true;
+    while (!inner_done) {
+        offset = g_ctx.buf.log->firstUndecidedOffset;
+        if (need_prepare_phase) {
+            rc = read_min_proposals(); // should always succeed
+            if (rc) {need_init = true; return false;}
 
-    while (offset < 80000) {
-        offset = log->firstUndecidedOffset;
-        if (needPreparePhase) {
-            read_min_proposals();
-            wait_for_majority();
-            if (!min_proposal_ok(propNr)) { // check if any of the read minProposals are larger than our propNr
-                return;
+            if (!min_proposal_ok()) { // check if any of the read minProposals are larger than our g_prop_nr
+                g_prop_nr += g_ctx.num_clients + 1; // increment proposal number
+                continue;
             } 
-            // write propNr into minProposal at a majority of logs // if fails, goto outerLoop
-            write_min_proposal(log, propNr);
-            // read slot at position "offset" from a majority of logs // if fails, abort
-            copy_remote_logs(offset, SLOT, DEFAULT_VALUE_SIZE);
+
+            write_min_proposal(g_ctx.buf.log);
+            // issue the next instruction without waiting for completions
+
+            // read slot at position "offset" from a majority of logs // if fails, restart from permissions
+            rc = copy_remote_logs(offset, SLOT, DEFAULT_VALUE_SIZE); 
+            if (rc) {need_init = true; return false;}
+
             // value with highest accepted proposal among those read
             value_t* freshVal = freshest_accepted_value(offset);
             if (freshVal->len != 0) {
-                v = freshVal;
+                // v = freshVal;
             } else {
-                needPreparePhase = false;
-                // v = get_my_value();
-                v = (value_t*)malloc(sizeof(value_t) + sizeof(uint64_t));
-                v->len = sizeof(uint64_t);
-                memcpy(v->val, &offset, 8);
+                need_prepare_phase = false;
+                // v = value;
             }
         }
-        // write v, propNr into slot at position "offset" at a majority of logs // if fails, goto outerLoop
-        write_log_slot(log, offset, propNr, v);
-        wait_for_majority();
+        // write v into slot at position "offset" at a majority of logs // if fails, restart from permissions
+        rc = write_log_slot(g_ctx.buf.log, offset, v);
+        if (rc) {need_init = true; return false;}
+
+        if ((uint64_t)v->val == value) { // I managed to replicate my value
+            inner_done = true;
+        }
         // increment the firstUndecidedOffset
-        log_increment_fuo(log);    
+        log_increment_fuo(g_ctx.buf.log);    
     }
+
+    return true;
 }
 
-void
+
+int
 update_followers() {
     void* local_address;
     uint64_t remote_addr;
     size_t req_size;
     uint64_t wrid = 0;
+    int rc = 0;
 
     int nb_to_wait = (g_ctx.num_clients/2) + 1;
 
@@ -93,7 +114,7 @@ update_followers() {
         local_address = &g_ctx.buf.log->firstUndecidedOffset;
         req_size = sizeof(g_ctx.buf.log->firstUndecidedOffset);
         remote_addr = log_get_remote_address(g_ctx.buf.log, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
-        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, wrid, true);        
+        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, wrid, true);   
 
     }
 
@@ -103,15 +124,17 @@ update_followers() {
         struct ibv_wc wc_array[g_ctx.num_clients];
         // currently we are polling at most num_clients WCs from the CQ at a time
         // we might want to change this number later
-        wait_for_n(nb_to_wait, g_ctx.round_nb, &g_ctx, g_ctx.num_clients, wc_array, g_ctx.completed_ops);        
+        rc = wait_for_n(nb_to_wait, g_ctx.round_nb, &g_ctx, g_ctx.num_clients, wc_array, g_ctx.completed_ops);     
     }
+
+    return rc;
 }
 
 bool
-min_proposal_ok(uint64_t propNr) {
+min_proposal_ok() {
 
     for (int i = 0; i < g_ctx.num_clients; ++i) {
-        if (g_ctx.qps[i].buf_copy.log->minProposal > propNr) {
+        if (g_ctx.qps[i].buf_copy.log->minProposal > g_prop_nr) {
             return false;
         }
     }
@@ -120,37 +143,37 @@ min_proposal_ok(uint64_t propNr) {
 }
 
 int
-write_log_slot(log_t* log, uint64_t offset, uint64_t propNr, value_t* value) {
+write_log_slot(log_t* log, uint64_t offset, value_t* value) {
 
     if (value->len <= 8) {
         // printf("Write log slot %lu, %lu, %lu\n", offset, propNr, *(uint64_t*)value->val);
-        log_write_local_slot_uint64(log, offset, propNr, *(uint64_t*)value->val);
+        log_write_local_slot_uint64(log, offset, g_prop_nr, *(uint64_t*)value->val);
     } else {
         // printf("Write log slot %lu, %lu, %s\n", offset, propNr, value->val);
-        log_write_local_slot_string(log, offset, propNr, (char*)value->val);        
+        log_write_local_slot_string(log, offset, g_prop_nr, (char*)value->val);        
     }
 
 
     // post sends to everyone
     rdma_write_to_all(log, offset, SLOT, true);
     
+    return wait_for_majority(); 
 }
 
-int
-write_min_proposal(log_t* log, uint64_t propNr) {
-    log->minProposal = propNr;
+void
+write_min_proposal(log_t* log) {
+    log->minProposal = g_prop_nr;
 
     rdma_write_to_all(log, 0, MIN_PROPOSAL, false); // offset is ignored for MIN_PROPOSAL
 }
 
-
 int
 read_min_proposals() {
-
     copy_remote_logs(0, MIN_PROPOSAL, 0); // size and offset are ignored for MIN_PROPOSAL
+    return wait_for_majority();
 }
 
-void
+int
 copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size) {
 
     void* local_address;
@@ -183,7 +206,7 @@ copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size) {
         post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_read->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_READ, wrid, true);
     }
 
-    if (type != SLOT) return;
+    if (type != SLOT) return 0;
 
     // for each entry that was seen as completed by the most recent wait_for_n
     // check length and, if necessary, re-issue read
@@ -281,10 +304,7 @@ freshest_accepted_value(uint64_t offset) {
     return freshest_value;
 }
 
-
-
-
-void
+int
 wait_for_majority() {
     int majority = (g_ctx.num_clients/2) + 1;
 
@@ -293,16 +313,16 @@ wait_for_majority() {
     struct ibv_wc wc_array[g_ctx.num_clients];
     // currently we are polling at most num_clients WCs from the CQ at a time
     // we might want to change this number later
-    wait_for_n(majority, g_ctx.round_nb, &g_ctx, g_ctx.num_clients, wc_array, g_ctx.completed_ops);
+    return wait_for_n(majority, g_ctx.round_nb, &g_ctx, g_ctx.num_clients, wc_array, g_ctx.completed_ops);
 }
 
-void
+int
 wait_for_all() {
     // array to store the work completions inside wait_for_n
     // we might want to place this in the global context later
     struct ibv_wc wc_array[g_ctx.num_clients];
     // currently we are polling at most num_clients WCs from the CQ at a time
     // we might want to change this number later
-    wait_for_n(g_ctx.num_clients, g_ctx.round_nb, &g_ctx, g_ctx.num_clients, wc_array, g_ctx.completed_ops); 
+    return wait_for_n(g_ctx.num_clients, g_ctx.round_nb, &g_ctx, g_ctx.num_clients, wc_array, g_ctx.completed_ops); 
 }
 
