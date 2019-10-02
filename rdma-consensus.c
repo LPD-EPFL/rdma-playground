@@ -388,3 +388,32 @@ void destroy_ctx(struct global_context* ctx, bool is_le){
     
 }
 
+void
+consensus_shutdown() {
+    stop_leader_election();
+    shutdown_leader_election_thread();
+    printf("Destroying IB context\n");
+    destroy_ctx(&g_ctx, false);
+
+    int maxrecvsize = 100;
+    char buf[maxrecvsize];
+    
+    printf("Closing socket\n");
+    for (int i = 0; i < g_ctx.num_clients; ++i) {
+        if (i < g_ctx.my_index) { // I initiated this connection
+            // do nothing
+        } else { // I accepted this connection
+            // wait for client to disconnect
+            while (recv(g_ctx.sockfd[i], buf, maxrecvsize, 0) > 0) {}
+        }
+        shutdown(g_ctx.sockfd[i], SHUT_RDWR);
+        close(g_ctx.sockfd[i]);
+    }    
+}
+
+void 
+emergency_shutdown(const char *reason) {
+    consensus_shutdown();
+    die(reason);
+}
+

@@ -16,6 +16,10 @@ int decide_leader();
 void rdma_ask_permission(le_data* le_data, uint64_t my_index, bool signaled);
 void check_permission_requests();
 
+void start_leader_election();
+void stop_leader_election();
+void shutdown_leader_election_thread();
+
 #ifdef __cplusplus
 }
 #endif

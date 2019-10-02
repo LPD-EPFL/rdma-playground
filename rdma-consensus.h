@@ -19,7 +19,7 @@ extern "C" {
 
 #include "ibv_layer.h"
 #include "utils.h"
-
+#include "leader-election.h"
 
 
 int die(const char *reason);
@@ -34,6 +34,9 @@ void init_ctx_common(struct global_context* ctx, bool is_le);
 void init_buf_le(struct global_context* ctx);
 void init_buf_consensus(struct global_context* ctx);
 void destroy_ctx(struct global_context* ctx, bool is_le);
+
+void consensus_shutdown();
+void emergency_shutdown(const char *reason);
 
 #ifdef __cplusplus
 }

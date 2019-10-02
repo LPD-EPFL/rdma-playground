@@ -8,7 +8,7 @@ extern "C" {
 #include "utils.h"
 
 void set_local_ib_connection(struct global_context* ctx, bool is_le);
-void print_ib_connection(char *conn_name, struct ib_connection *conn);
+void print_ib_connection(const char *conn_name, struct ib_connection *conn);
 
 int tcp_exch_ib_connection_info(struct global_context* ctx);
 

@@ -19,11 +19,6 @@ extern struct global_context g_ctx;
 extern struct global_context le_ctx;
 extern volatile bool stop_le;
 
-// barriers to synchronize with the leader election thread
-// entry_barrier syncs with the beginning of the leader election loop
-// exit_barrier syncs with the exit from the leader election thread
-barrier_t entry_barrier, exit_barrier;
-
 
 namespace {
 
@@ -64,7 +59,8 @@ class Environment : public ::testing::Environment {
         
         page_size = sysconf(_SC_PAGESIZE);
 
-        config_file = "./config";
+        strcpy(config_file, "./config");
+
         count_lines(config_file, &g_ctx);
         EXPECT_GT(g_ctx.num_clients, 0);
         
@@ -129,25 +125,15 @@ TEST(RDMATest, HelloWorld) {
 }
 
 TEST(RDMATest, LeaderElectionCheckPermissions) {
-    barrier_init(&entry_barrier, 2);
-    barrier_init(&exit_barrier, 2);
+    start_leader_election();
 
-    stop_le = false;
-    spawn_leader_election_thread();
-
-    barrier_cross(&entry_barrier);
     sleep(5);
-    stop_le = true;
-    barrier_cross(&exit_barrier);
+    stop_leader_election();
+    shutdown_leader_election_thread();
 }
 
 TEST(RDMATest, LeaderElectionAskPermission) {
-    barrier_init(&entry_barrier, 2);
-    barrier_init(&exit_barrier, 2);
-    stop_le = false;
-    spawn_leader_election_thread();
-
-    barrier_cross(&entry_barrier);
+    start_leader_election();
 
     if (g_ctx.my_index == 1) {
         printf("Asking for permission...\n");
@@ -196,28 +182,21 @@ TEST(RDMATest, LeaderElectionAskPermission) {
         sleep(5);
     }
 
-    stop_le = true;
-    barrier_cross(&exit_barrier);
-
+    stop_leader_election();
+    shutdown_leader_election_thread();
 }
 
 TEST(RDMATest, DetectLeaderFailure) {
-    barrier_init(&entry_barrier, 2);
-    barrier_init(&exit_barrier, 2);
-
-    stop_le = false;
-    spawn_leader_election_thread();
-
-    barrier_cross(&entry_barrier);
+    start_leader_election();
     sleep(1);
     if (g_ctx.my_index != 0) {
         sleep(3);
-        stop_le = true;
+        stop_leader_election();
     } else {
-        stop_le = true;
+        stop_leader_election();
         sleep(3);
     }
-    barrier_cross(&exit_barrier);    
+    shutdown_leader_election_thread();
 }
 
 TEST(RDMATest, BigTest) {    

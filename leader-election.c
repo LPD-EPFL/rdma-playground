@@ -8,8 +8,10 @@ extern struct global_context g_ctx;
 extern char* config_file;
 extern int leader;
 
-extern barrier_t entry_barrier;
-extern barrier_t exit_barrier;
+// barriers to synchronize with the leader election thread
+// entry_barrier syncs with the beginning of the leader election loop
+// exit_barrier syncs with the exit from the leader election thread
+barrier_t entry_barrier, exit_barrier;
 
 #define TIMED_LOOP(duration)                                                \
 {   clock_t __begin = clock();                                              \
@@ -219,4 +221,25 @@ check_permission_requests() {
     }
     
     // printf("Done checking permissions\n");
+}
+
+void
+start_leader_election() {
+    barrier_init(&entry_barrier, 2);
+    barrier_init(&exit_barrier, 2);
+
+    stop_le = false;
+    spawn_leader_election_thread();
+
+    barrier_cross(&entry_barrier);
+}
+
+void
+stop_leader_election() {
+    stop_le = true;
+}
+
+void
+shutdown_leader_election_thread() {
+    barrier_cross(&exit_barrier);
 }
