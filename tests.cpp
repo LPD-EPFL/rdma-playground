@@ -183,12 +183,17 @@ TEST(RDMATest, DetectLeaderFailure) {
 }
 
 TEST(RDMATest, Propose) {
+    uint64_t val;
+
     start_leader_election();
 
     if (g_ctx.my_index == 0) {
-        propose(42);
-        propose(43);
-        propose(44);
+        val = 42;
+        propose((uint8_t*)&val, sizeof(val));
+        val = 43;
+        propose((uint8_t*)&val, sizeof(val));
+        val = 44;
+        propose((uint8_t*)&val, sizeof(val));
         sleep(1);        
     } else {
         sleep(1);

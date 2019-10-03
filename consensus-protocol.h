@@ -9,8 +9,8 @@ extern "C" {
 #include "ibv_layer.h"
 #include "leader-election.h"
 
-bool propose(uint64_t value);
-bool propose_inner(uint64_t value);
+bool propose(uint8_t* buf, size_t len);
+bool propose_inner(uint8_t* buf, size_t len);
 int update_followers();
 bool min_proposal_ok();
 int write_log_slot(log_t* log, uint64_t offset, value_t* value);

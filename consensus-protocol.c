@@ -11,7 +11,7 @@ bool need_init = true;
 uint64_t g_prop_nr = 0;
 
 bool
-propose(uint64_t value) {
+propose(uint8_t* buf, size_t len) {
     int rc;
     bool done = false;
 
@@ -19,7 +19,7 @@ propose(uint64_t value) {
         g_prop_nr = g_ctx.my_index + g_ctx.num_clients + 1;
     }
 
-    printf("Proposing %lu \n", value);
+    printf("Proposing %lu \n", *(uint64_t*)buf);
     while (!done) {
         if (leader != g_ctx.my_index) {
             return false;
@@ -34,14 +34,14 @@ propose(uint64_t value) {
             need_init = false;            
         }
 
-        done = propose_inner(value);
+        done = propose_inner(buf, len);
     }
 
     return true;
 }
 
 bool
-propose_inner(uint64_t value) {
+propose_inner(uint8_t* buf, size_t len) {
     int rc;
     bool inner_done = false;
     uint64_t offset = 0;
@@ -77,9 +77,9 @@ propose_inner(uint64_t value) {
             need_prepare_phase = false;
             // adopt my value
             printf("About to adopt my value\n");
-            v = (value_t*)malloc(sizeof(value_t) + sizeof(uint64_t));
-            v->len = sizeof(uint64_t);
-            *(uint64_t *)v->val = value;
+            v = (value_t*)malloc(sizeof(value_t) + len);
+            v->len = len;
+            memcpy(v->val, buf, len);
         }
 
 
@@ -87,7 +87,7 @@ propose_inner(uint64_t value) {
         rc = write_log_slot(g_ctx.buf.log, offset, v);
         if (rc) {need_init = true; need_prepare_phase = true; return false;}
 
-        if (*(uint64_t *)v->val == value) { // I managed to replicate my value
+        if (memcmp(v->val, buf, len) == 0) { // I managed to replicate my value
             printf("Inner propose is done\n");
             inner_done = true;
             free(v);
