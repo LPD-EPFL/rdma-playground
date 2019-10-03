@@ -5,7 +5,7 @@
 extern struct global_context g_ctx;
 extern struct global_context le_ctx;
 
-void count_lines(char* filename, struct global_context *ctx) {
+void count_lines(const char* filename, struct global_context *ctx) {
     
     FILE * fp;
     char * line = (char*)malloc(NI_MAXHOST * sizeof(char));
@@ -33,7 +33,7 @@ void count_lines(char* filename, struct global_context *ctx) {
     //  else, id[next available qp_context] = the number of the current line
 }
 
-void parse_config(char* filename, struct global_context *ctx) {
+void parse_config(const char* filename, struct global_context *ctx) {
     struct ifaddrs *ifaddr;
     
 
@@ -390,8 +390,6 @@ void destroy_ctx(struct global_context* ctx, bool is_le){
 
 void
 consensus_shutdown() {
-    stop_leader_election();
-    shutdown_leader_election_thread();
     printf("Destroying IB context\n");
     destroy_ctx(&g_ctx, false);
 
@@ -413,6 +411,8 @@ consensus_shutdown() {
 
 void 
 emergency_shutdown(const char *reason) {
+    stop_leader_election();
+    shutdown_leader_election_thread();
     consensus_shutdown();
     die(reason);
 }

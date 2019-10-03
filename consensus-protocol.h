@@ -16,7 +16,7 @@ bool min_proposal_ok();
 int write_log_slot(log_t* log, uint64_t offset, value_t* value);
 void write_min_proposal(log_t* log);
 int read_min_proposals();
-int copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size);
+void copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size);
 void rdma_write_to_all(log_t* log, uint64_t offset, write_location_t type, bool signaled);
 value_t* freshest_accepted_value(uint64_t offset);
 int wait_for_majority();

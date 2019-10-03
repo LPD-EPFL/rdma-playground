@@ -1,4 +1,5 @@
 #include "rdma-consensus.h"
+#include "consensus-protocol.h"
 #include "leader-election.h"
 #include "barrier.h"
 
@@ -11,7 +12,7 @@ static int page_size;
 static int sl = 1;
 static pid_t pid;
 
-char* config_file;
+const char* config_file = "./config";
 
 int leader = 0;
 
@@ -47,7 +48,7 @@ class Environment : public ::testing::Environment {
         EXPECT_NE(pid, 0);
         EXPECT_NE(g_ctx.port, 0);
         EXPECT_NE(g_ctx.ib_port, 0);
-        EXPECT_EQ(g_ctx.len, 0);
+        EXPECT_EQ(g_ctx.len, (uint64_t)0);
         EXPECT_NE(g_ctx.tx_depth, 0);
         EXPECT_NE(sl, 0);
 
@@ -58,8 +59,6 @@ class Environment : public ::testing::Environment {
         srand48(pid * time(NULL));
         
         page_size = sysconf(_SC_PAGESIZE);
-
-        strcpy(config_file, "./config");
 
         count_lines(config_file, &g_ctx);
         EXPECT_GT(g_ctx.num_clients, 0);
@@ -99,23 +98,7 @@ class Environment : public ::testing::Environment {
 
     // Override this to define how to tear down the environment.
     void TearDown() override {
-        printf("Destroying IB context\n");
-        destroy_ctx(&g_ctx, false);
-
-        int maxrecvsize = 100;
-        char buf[maxrecvsize];
-        
-        printf("Closing socket\n");
-        for (int i = 0; i < g_ctx.num_clients; ++i) {
-            if (i < g_ctx.my_index) { // I initiated this connection
-                // do nothing
-            } else { // I accepted this connection
-                // wait for client to disconnect
-                while (recv(g_ctx.sockfd[i], buf, maxrecvsize, 0) > 0) {}
-            }
-            shutdown(g_ctx.sockfd[i], SHUT_RDWR);
-            close(g_ctx.sockfd[i]);
-        }
+        consensus_shutdown();
     }
 };
 
@@ -197,6 +180,58 @@ TEST(RDMATest, DetectLeaderFailure) {
         sleep(3);
     }
     shutdown_leader_election_thread();
+}
+
+TEST(RDMATest, Propose) {
+    start_leader_election();
+
+    if (g_ctx.my_index == 0) {
+        propose(42);
+        propose(43);
+        propose(44);
+        sleep(1);        
+    } else {
+        sleep(1);
+        log_print(g_ctx.buf.log);
+    }
+
+    stop_leader_election();
+    shutdown_leader_election_thread();
+}
+
+TEST(RDMATest, UnexpectedError) {
+    start_leader_election();
+
+    if (g_ctx.my_index == 2) {
+        // revoke 0's permission to read
+        TEST_NZ(ibv_rereg_mr(   g_ctx.qps[0].mr_write, 
+                        IBV_REREG_MR_CHANGE_ACCESS, 
+                        g_ctx.pd, 
+                        g_ctx.buf.log,
+                        g_ctx.len,
+                        (IBV_ACCESS_LOCAL_WRITE)),
+                        "ibv_rereg_mr: failed to give permission");
+        sleep(3);
+        // exit normally
+        consensus_shutdown();
+    } else if (g_ctx.my_index == 0) {
+        sleep(1);
+        // try to read from 2
+        printf("0 trying to read from 2 -> should not succeed\n");
+        g_ctx.round_nb++;
+        uint64_t wrid = 0;
+        WRID_SET_SSN(wrid, g_ctx.round_nb);
+        WRID_SET_CONN(wrid, 1);
+        post_send(g_ctx.qps[1].qp, g_ctx.buf.log, sizeof(uint64_t), g_ctx.qps[1].mr_write->lkey, g_ctx.qps[1].remote_connection.rkey, g_ctx.qps[1].remote_connection.vaddr, IBV_WR_RDMA_READ, wrid, true);
+        // wait for completion -> should crash
+        struct ibv_wc wc;
+        wait_for_n(1, g_ctx.round_nb, &g_ctx, 1, &wc, g_ctx.completed_ops);
+    } else {
+        // sleep 3
+        sleep(3);
+        // exit normally
+        consensus_shutdown();
+    }
 }
 
 TEST(RDMATest, BigTest) {    

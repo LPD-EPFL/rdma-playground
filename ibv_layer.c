@@ -239,7 +239,7 @@ rc_qp_destroy( struct ibv_qp *qp, struct ibv_cq *cq ) {
  */
 void rdma_write(int id){
 
-    post_send(g_ctx.qps[id].qp, g_ctx.buf.log, log_size(g_ctx.buf.log), g_ctx.qps[id].mr_write->lkey, g_ctx.qps[id].remote_connection.rkey, g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
+    post_send_inner(g_ctx.qps[id].qp, g_ctx.buf.log, log_size(g_ctx.buf.log), g_ctx.qps[id].mr_write->lkey, g_ctx.qps[id].remote_connection.rkey, g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
 
 }    
 

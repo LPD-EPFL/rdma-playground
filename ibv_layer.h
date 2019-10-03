@@ -167,21 +167,7 @@ static int wait_for_n_inner(  int n,
     }
 }
 
-static int wait_for_n(  int n, 
-                        uint64_t round_nb, 
-                        struct global_context* ctx, 
-                        int num_entries, 
-                        struct ibv_wc *wc_array, 
-                        uint64_t* completed_ops ) {
 
-    int rc = wait_for_n_inner(n, round_nb, ctx, num_entries, wc_array, completed_ops);
-    
-    if (rc < 0) { // unexpected error, shutdown
-        // die
-    }
-
-    return rc;
-}
 
 
 static int
@@ -233,23 +219,6 @@ post_send_inner(  struct ibv_qp* qp,
 
     return rc;
 
-}
-
-static void
-post_send(  struct ibv_qp* qp,
-            void* buf,
-            uint32_t len,
-            uint32_t lkey,
-            uint32_t rkey,
-            uint64_t remote_addr,
-            enum ibv_wr_opcode opcode,
-            uint64_t wrid,
-            bool signaled   ) {
-    
-    int rc = post_send_inner(qp, buf, len, lkey, rkey, remote_addr, opcode, wrid, signaled);
-    if (rc) { // there was a problem
-        // die
-    }
 }
 
 #ifdef __cplusplus

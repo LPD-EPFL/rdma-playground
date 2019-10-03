@@ -72,7 +72,6 @@ leader_election(void* arg) {
     barrier_cross(&entry_barrier);
         
     // start the leader election loop
-    int i=0;
     while (!stop_le) {
         // increment a local counter
         le_ctx.buf.le_data->counters.count_cur++;

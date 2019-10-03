@@ -8,13 +8,18 @@ extern struct global_context le_ctx;
 
 bool need_prepare_phase = true;
 bool need_init = true;
-uint64_t g_prop_nr = g_ctx.my_index + g_ctx.num_clients + 1;
+uint64_t g_prop_nr = 0;
 
 bool
 propose(uint64_t value) {
     int rc;
     bool done = false;
 
+    if (g_prop_nr == 0) {
+        g_prop_nr = g_ctx.my_index + g_ctx.num_clients + 1;
+    }
+
+    printf("Proposing %lu \n", value);
     while (!done) {
         if (leader != g_ctx.my_index) {
             return false;
@@ -41,9 +46,11 @@ propose_inner(uint64_t value) {
     bool inner_done = false;
     uint64_t offset = 0;
     value_t* v;
+    value_t* freshVal = NULL;
 
     while (!inner_done) {
         offset = g_ctx.buf.log->firstUndecidedOffset;
+        printf("Offset is %lu \n", offset);
         if (need_prepare_phase) {
             rc = read_min_proposals(); // should always succeed
             if (rc) {need_init = true; return false;}
@@ -56,25 +63,36 @@ propose_inner(uint64_t value) {
             write_min_proposal(g_ctx.buf.log);
             // issue the next instruction without waiting for completions
 
-            // read slot at position "offset" from a majority of logs // if fails, restart from permissions
-            rc = copy_remote_logs(offset, SLOT, DEFAULT_VALUE_SIZE); 
-            if (rc) {need_init = true; return false;}
+            // read slot at position "offset" from a majority of logs 
+            copy_remote_logs(offset, SLOT, DEFAULT_VALUE_SIZE); 
 
             // value with highest accepted proposal among those read
-            value_t* freshVal = freshest_accepted_value(offset);
-            if (freshVal->len != 0) {
-                // v = freshVal;
-            } else {
-                need_prepare_phase = false;
-                // v = value;
-            }
+            freshVal = freshest_accepted_value(offset);
         }
+
+        if (freshVal != NULL && freshVal->len != 0) {
+            printf("Found accepted value: %lu\n", *(uint64_t*)freshVal->val);
+            v = freshVal;
+        } else {
+            need_prepare_phase = false;
+            // adopt my value
+            printf("About to adopt my value\n");
+            v = (value_t*)malloc(sizeof(value_t) + sizeof(uint64_t));
+            v->len = sizeof(uint64_t);
+            *(uint64_t *)v->val = value;
+        }
+
+
         // write v into slot at position "offset" at a majority of logs // if fails, restart from permissions
         rc = write_log_slot(g_ctx.buf.log, offset, v);
-        if (rc) {need_init = true; return false;}
+        if (rc) {need_init = true; need_prepare_phase = true; return false;}
 
-        if ((uint64_t)v->val == value) { // I managed to replicate my value
+        if (*(uint64_t *)v->val == value) { // I managed to replicate my value
+            printf("Inner propose is done\n");
             inner_done = true;
+            free(v);
+        } else {
+            printf("Inner propose is not done\n");
         }
         // increment the firstUndecidedOffset
         log_increment_fuo(g_ctx.buf.log);    
@@ -173,7 +191,7 @@ read_min_proposals() {
     return wait_for_majority();
 }
 
-int
+void
 copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size) {
 
     void* local_address;
@@ -206,7 +224,7 @@ copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size) {
         post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_read->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_READ, wrid, true);
     }
 
-    if (type != SLOT) return 0;
+    if (type != SLOT) return;
 
     // for each entry that was seen as completed by the most recent wait_for_n
     // check length and, if necessary, re-issue read
