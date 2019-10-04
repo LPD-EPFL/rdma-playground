@@ -26,8 +26,20 @@ tests:
 	$(CXX) $(CXXFLAGS) utils.c ibv_layer.c  consensus-protocol.c rdma-consensus.c leader-election.c tests.cpp  -o ./bin/tests $(LDFLAGS)
 # 	$(CXX) $(CXXFLAGS) tests.cpp  -o ./bin/tests $(LDFLAGS)
 
+propose-test:
+	$(CC) $(CXXFLAGS) utils.c ibv_layer.c  consensus-protocol.c rdma-consensus.c leader-election.c propose_api.c propose_main.c   -o ./bin/propose_main $(LDFLAGS)
+
+
+%.o: %.c
+	$(CC) $(CXXFLAGS) $(LDFLAGS) $< -c
+
+propose-test-obj: utils.o ibv_layer.o consensus-protocol.o rdma-consensus.o leader-election.o propose_api.o propose_main.o
+	cp $^ obj
+	$(CC) $(CXXFLAGS) $^ -o ./bin/propose_main $(LDFLAGS)
+
 
 
 clean:
 	-rm -fv *.o
+	-rm -fv obj/*.o
 	-rm -fv ./bin/*

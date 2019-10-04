@@ -145,27 +145,27 @@ decide_leader() {
         counter_t* counters = le_ctx.qps[i].buf_copy.counter;
         if (counters->count_old != counters->count_oldest) { // this node has moved
             // return i;
-            printf("Node %d is my leader\n", i);
+            // printf("Node %d is my leader\n", i);
             return i;
         }
         
         // if there is no concurrent read of the counters in progress, look at the most recent read counter as well
         if (le_ctx.completed_ops[i] == le_ctx.round_nb) {
             if (counters->count_cur != counters->count_old) {
-                printf("Node %d is my leader\n", i);
+                // printf("Node %d is my leader\n", i);
                 return i;
             }
         }
     }
 
     // return myself (no smaller id incremented their counter)
-    printf("I am the leader\n");
+    // printf("I am the leader\n");
     return le_ctx.my_index;
 }
 
 // TODO: we want this to also revoke the access of my current leader to my memory
 void
-rdma_ask_permission(le_data* le_data, uint64_t my_index, bool signaled) {
+rdma_ask_permission(le_data_t* le_data, uint64_t my_index, bool signaled) {
 
     void* local_address;
     uint64_t remote_addr;

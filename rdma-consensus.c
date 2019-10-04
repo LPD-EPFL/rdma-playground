@@ -118,7 +118,7 @@ compare_to_self(struct ifaddrs *ifaddr, char *addr) {
  */
 void tcp_client_connect()
 {
-    struct addrinfo *res, *t;
+    struct addrinfo *res = NULL, *t;
     struct addrinfo hints;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family        = AF_UNSPEC;
@@ -238,12 +238,43 @@ void init_buf_le(struct global_context* ctx) {
     }
 }
 
+void * threadFunc(void * arg) {
+	volatile log_t *log = (volatile log_t *)arg;
+
+	printf("Polling the log\n");
+
+	while (1) {
+		log_t *local_log = (log_t *)log;
+		sleep(2);
+		log_print(local_log);
+	}
+		
+	// Return value from thread
+	return NULL;
+}
+
 void init_buf_consensus(struct global_context* ctx) {
 
     g_ctx.buf.log = log_new();
     g_ctx.len = log_size(g_ctx.buf.log);
     for (int i = 0; i < ctx->num_clients; i++) {
         ctx->qps[i].buf_copy.log = log_new();
+    }
+
+    // Added for testing purposes
+    pthread_t threadId;
+
+    // Create a thread that will funtion threadFunc()
+    int err = pthread_create(&threadId, NULL, &threadFunc, (void *) g_ctx.buf.log);
+    // Check if thread is created sucessfuly
+    if (err) {
+	    emergency_shutdown("Could not create a detached thread");
+    }
+	
+    err = pthread_detach(threadId);
+    // Check if thread is created sucessfuly
+    if (err) {
+	    emergency_shutdown("Could not create a detached thread");
     }
 }
 
