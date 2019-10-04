@@ -77,9 +77,7 @@ propose_inner(uint8_t* buf, size_t len) {
             need_prepare_phase = false;
             // adopt my value
             printf("About to adopt my value\n");
-            v = (value_t*)malloc(sizeof(value_t) + len);
-            v->len = len;
-            memcpy(v->val, buf, len);
+            v = new_value(buf, len);
         }
 
 
@@ -90,7 +88,7 @@ propose_inner(uint8_t* buf, size_t len) {
         if (memcmp(v->val, buf, len) == 0) { // I managed to replicate my value
             printf("Inner propose is done\n");
             inner_done = true;
-            free(v);
+            free_value(v);
         } else {
             printf("Inner propose is not done\n");
         }
@@ -100,7 +98,6 @@ propose_inner(uint8_t* buf, size_t len) {
 
     return true;
 }
-
 
 int
 update_followers() {
@@ -163,14 +160,16 @@ min_proposal_ok() {
 int
 write_log_slot(log_t* log, uint64_t offset, value_t* value) {
 
-    if (value->len <= 8) {
-        // printf("Write log slot %lu, %lu, %lu\n", offset, propNr, *(uint64_t*)value->val);
-        log_write_local_slot_uint64(log, offset, g_prop_nr, *(uint64_t*)value->val);
-    } else {
-        // printf("Write log slot %lu, %lu, %s\n", offset, propNr, value->val);
-        log_write_local_slot_string(log, offset, g_prop_nr, (char*)value->val);        
-    }
+    printf("Value length %lu - last byte %u\n", value->len, value->val[value->len-1]);
+    // if (value->len <= 8) {
+    //     printf("Write log slot uint64 %lu, %lu\n", offset, *(uint64_t*)value->val);
+    //     log_write_local_slot_uint64(log, offset, g_prop_nr, *(uint64_t*)value->val);
+    // } else {
+    //     printf("Write log slot string %lu, %s\n", offset, value->val);
+    //     log_write_local_slot_string(log, offset, g_prop_nr, (char*)value->val);        
+    // }
 
+    log_write_local_slot(log, offset, g_prop_nr, value);
 
     // post sends to everyone
     rdma_write_to_all(log, offset, SLOT, true);

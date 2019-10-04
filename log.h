@@ -7,6 +7,7 @@ extern "C" {
 
 #define DEFAULT_VALUE_SIZE 8 // value size if it is uint64_t
 #define DEFAULT_LOG_LENGTH 1000000
+#define CACHE_LINE_SIZE    64
 
 struct value_t {
     uint64_t len;
@@ -24,6 +25,7 @@ struct log {
     uint64_t minProposal;
     uint64_t firstUndecidedOffset;
     uint64_t len;
+    uint8_t padding[CACHE_LINE_SIZE - 3 * sizeof(uint64_t)];
     uint8_t slots[0];
 };
 typedef struct log log_t;
@@ -126,6 +128,8 @@ log_get_local_slot(log_t* log, uint64_t offset) {
 // returns the total size (headers + data) of a log slot at a given offset
 static uint64_t
 log_slot_size(log_t* log, uint64_t offset) {
+    printf("log_slot_t: %lu", sizeof(log_slot_t));
+    printf("Log slot size: %lu\n", sizeof(log_slot_t) + log_get_local_slot(log, offset)->accValue.len);
     return sizeof(log_slot_t) + log_get_local_slot(log, offset)->accValue.len;
 }
 
@@ -137,10 +141,26 @@ log_get_remote_address(log_t* local_log, void* local_offset, log_t* remote_log) 
     return (uint64_t)remote_log + ((uint64_t)local_offset - (uint64_t)local_log);
 }
 
+static uint64_t
+next_offset_cache_aligned (uint64_t offset) {
+    return (offset + (CACHE_LINE_SIZE - 1)) & ~(CACHE_LINE_SIZE - 1);
+}
+
 // increments the firstUndecidedOffset of a log
 static void
 log_increment_fuo(log_t *log) {
-    log->firstUndecidedOffset += log_slot_size(log, log->firstUndecidedOffset);
+    uint64_t offset = log->firstUndecidedOffset + log_slot_size(log, log->firstUndecidedOffset);
+    offset = next_offset_cache_aligned(offset);
+    log->firstUndecidedOffset = offset;
+}
+
+static void
+log_write_local_slot(log_t* log, uint64_t offset, uint64_t propNr, value_t* v) {
+    log_slot_t *slot = log_get_local_slot(log, offset);
+
+    slot->accProposal = propNr;
+    slot->accValue.len = v->len;
+    memcpy(slot->accValue.val, v->val, v->len);
 }
 
 static void
@@ -170,12 +190,27 @@ log_print(log_t* log) {
         if (slot->accValue.len == 8) {
             printf("[%lu, %lu] ", slot->accProposal, *(uint64_t*)slot->accValue.val);
         } else {
-            printf("[%lu, %s] ", slot->accProposal, (char*)slot->accValue.val);
+            printf("[%lu, %u] ", slot->accProposal, slot->accValue.val[slot->accValue.len-1]);
         }
         offset += log_slot_size(log, offset);
+        offset = next_offset_cache_aligned(offset);
         slot = log_get_local_slot(log, offset);
     }
     printf("}\n");
+}
+
+static value_t*
+new_value(uint8_t* buf, size_t len) {
+    value_t* v = (value_t*)malloc(sizeof(value_t) + len + 1); // +1 for the canary value
+    v->len = len + 1;
+    v->val[len] = 0xFE; // the canary value
+    memcpy(v->val, buf, len);
+    return v;
+}
+
+static void
+free_value(value_t* v) {
+    free(v);
 }
 
 #ifdef __cplusplus
