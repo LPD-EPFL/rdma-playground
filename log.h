@@ -128,8 +128,6 @@ log_get_local_slot(log_t* log, uint64_t offset) {
 // returns the total size (headers + data) of a log slot at a given offset
 static uint64_t
 log_slot_size(log_t* log, uint64_t offset) {
-    printf("log_slot_t: %lu", sizeof(log_slot_t));
-    printf("Log slot size: %lu\n", sizeof(log_slot_t) + log_get_local_slot(log, offset)->accValue.len);
     return sizeof(log_slot_t) + log_get_local_slot(log, offset)->accValue.len;
 }
 
@@ -181,6 +179,36 @@ log_write_local_slot_string(log_t* log, uint64_t offset, uint64_t propNr, char* 
     strcpy((char*)slot->accValue.val, val);
 }
 
+static void printchar(unsigned char theChar) {
+   switch (theChar) {
+       case '\n':
+           printf("\\n");
+           break;
+       case '\r':
+           printf("\\r");
+           break;
+       case '\t':
+           printf("\\t");
+           break;
+       default:
+           if ((theChar < 0x20) || (theChar > 0x7f)) {
+               printf("\\%03o", (unsigned char)theChar);
+           } else {
+               printf("%c", theChar);
+           }
+       break;
+  }
+}
+
+static void
+log_print_slot_generic(log_slot_t* slot) {
+    printf("[%lu, ", slot->accProposal);
+    for (uint64_t i = 0; i < slot->accValue.len; i++) {
+        printchar(((unsigned char*)slot->accValue.val)[i]);
+    }
+    printf("] ");
+}
+
 static void
 log_print(log_t* log) {
     printf("{ minProposal = %lu, firstUndecidedOffset = %lu, len = %lu, ", log->minProposal, log->firstUndecidedOffset, log->len);
@@ -190,7 +218,7 @@ log_print(log_t* log) {
         if (slot->accValue.len == 8) {
             printf("[%lu, %lu] ", slot->accProposal, *(uint64_t*)slot->accValue.val);
         } else {
-            printf("[%lu, %u] ", slot->accProposal, slot->accValue.val[slot->accValue.len-1]);
+            log_print_slot_generic(slot);
         }
         offset += log_slot_size(log, offset);
         offset = next_offset_cache_aligned(offset);
@@ -203,7 +231,7 @@ static value_t*
 new_value(uint8_t* buf, size_t len) {
     value_t* v = (value_t*)malloc(sizeof(value_t) + len + 1); // +1 for the canary value
     v->len = len + 1;
-    v->val[len] = 0xFE; // the canary value
+    v->val[len] = 0xFF; // the canary value
     memcpy(v->val, buf, len);
     return v;
 }

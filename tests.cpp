@@ -185,7 +185,7 @@ TEST(RDMATest, DetectLeaderFailure) {
 TEST(RDMATest, Propose) {
     uint64_t val;
 
-    start_leader_election();
+    // start_leader_election();
 
     if (g_ctx.my_index == 0) {
         val = 42;
@@ -200,8 +200,8 @@ TEST(RDMATest, Propose) {
         log_print(g_ctx.buf.log);
     }
 
-    stop_leader_election();
-    shutdown_leader_election_thread();
+    // stop_leader_election();
+    // shutdown_leader_election_thread();
 }
 
 TEST(RDMATest, UnexpectedError) {
