@@ -304,7 +304,7 @@ void init_ctx_common(struct global_context* ctx, bool is_le)
     ctx->completed_ops = (uint64_t*)malloc(ctx->num_clients * sizeof(uint64_t));
     memset(ctx->completed_ops, 0, ctx->num_clients * sizeof(uint64_t));
 
-    if (ctx->ib_dev == NULL) {
+    if (ctx->ib_dev == NULL) { // we only do this once & share this stuff among all contexts
         struct ibv_device **dev_list;
 
         TEST_Z(dev_list = ibv_get_device_list(NULL),
@@ -315,16 +315,11 @@ void init_ctx_common(struct global_context* ctx, bool is_le)
 
         TEST_Z(ctx->context = ibv_open_device(ctx->ib_dev),
                 "Could not create context, ibv_open_device");
+
+        TEST_Z(ctx->pd = ibv_alloc_pd(ctx->context),
+            "Could not allocate protection domain, ibv_alloc_pd");
     }
     
-    TEST_Z(ctx->pd = ibv_alloc_pd(ctx->context),
-        "Could not allocate protection domain, ibv_alloc_pd");
-
-    /* We dont really want IBV_ACCESS_LOCAL_WRITE, but IB spec says:
-     * The Consumer is not allowed to assign Remote Write or Remote Atomic to
-     * a Memory Region that has not been assigned Local Write. 
-     */
-
     
     TEST_Z(ctx->ch = ibv_create_comp_channel(ctx->context),
             "Could not create completion channel, ibv_create_comp_channel");
@@ -407,8 +402,10 @@ void destroy_ctx(struct global_context* ctx, bool is_le){
         }
     }
 
-    TEST_NZ(ibv_dealloc_pd(ctx->pd),
+    if (!is_le) { // only do this once because pd is shared
+        TEST_NZ(ibv_dealloc_pd(ctx->pd),
             "Could not deallocate protection domain, ibv_dealloc_pd");    
+    }
     
     if (is_le) {
         le_data_free(ctx->buf.le_data);

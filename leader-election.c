@@ -62,6 +62,7 @@ leader_election(void* arg) {
     // create & initialize a le context
     le_ctx.ib_dev             = g_ctx.ib_dev;
     le_ctx.context            = g_ctx.context;
+    le_ctx.pd                 = g_ctx.pd;
     le_ctx.num_clients        = g_ctx.num_clients;
     le_ctx.port               = g_ctx.port;
     le_ctx.ib_port            = g_ctx.ib_port;
@@ -200,13 +201,11 @@ static void
 wait_for_perm_ack(int n) {
     int acks = 0;
     uint64_t len = le_ctx.buf.le_data->len;
-    int got_ack[len] = { 0 };
 
     while (acks < n) {
         for (int i = 0; i < len; ++i) {
-            if (!got_ack[i] && le_ctx.buf.le_data->perm_reqs_acks[i].ack == 1) {
+            if (le_ctx.buf.le_data->perm_reqs_acks[i].ack == 1) {
                 le_ctx.buf.le_data->perm_reqs_acks[i].ack = 0;
-                got_ack[i] = 1;
                 printf("Got ack from %d\n", i);
                 acks += 1;
             }
@@ -236,7 +235,7 @@ rdma_ask_permission(le_data_t* le_data, uint64_t my_index, bool signaled) {
 
         WRID_SET_CONN(wrid, i);
         remote_addr = le_data_get_remote_address(le_data, local_address, ((le_data_t*)le_ctx.qps[i].remote_connection.vaddr));
-        post_send(le_ctx.qps[i].qp, local_address, req_size, le_ctx.qps[i].mr_write->lkey, le_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, wrid, signaled);
+        post_send(g_ctx.qps[i].qp, local_address, req_size, le_ctx.qps[i].mr_write->lkey, le_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, wrid, signaled);
     }
 
     nanosleep((const struct timespec[]){{0, SHORT_SLEEP_DURATION_NS}}, NULL);
@@ -244,7 +243,7 @@ rdma_ask_permission(le_data_t* le_data, uint64_t my_index, bool signaled) {
     struct ibv_wc wc_array[le_ctx.num_clients];
 
     // wait for at least one permission request to be successfully sent
-    wait_for_n(1, g_ctx.round_nb, &le_ctx, le_ctx.num_clients, wc_array, g_ctx.completed_ops);
+    wait_for_n(1, g_ctx.round_nb, &g_ctx, g_ctx.num_clients, wc_array, g_ctx.completed_ops);
 
     // wait for at least one permission ack to arrive
     wait_for_perm_ack(2);
@@ -272,7 +271,7 @@ send_perm_ack(int index) {
     WRID_SET_SSN(wrid, g_ctx.round_nb);
     WRID_SET_CONN(wrid, index);
     remote_addr = le_data_get_remote_address(le_ctx.buf.le_data, local_address, ((le_data_t*)le_ctx.qps[index].remote_connection.vaddr));
-    post_send(le_ctx.qps[index].qp, local_address, req_size, le_ctx.qps[index].mr_write->lkey, le_ctx.qps[index].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, wrid, true);
+    post_send(g_ctx.qps[index].qp, local_address, req_size, le_ctx.qps[index].mr_write->lkey, le_ctx.qps[index].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, wrid, true);
    
 
     nanosleep((const struct timespec[]){{0, SHORT_SLEEP_DURATION_NS}}, NULL);
@@ -280,7 +279,7 @@ send_perm_ack(int index) {
     struct ibv_wc wc_array[le_ctx.num_clients];
 
     // wait for at least one permission ack to be successfully sent
-    wait_for_n(1, g_ctx.round_nb, &le_ctx, le_ctx.num_clients, wc_array, g_ctx.completed_ops);    
+    wait_for_n(1, g_ctx.round_nb, &g_ctx, g_ctx.num_clients, wc_array, g_ctx.completed_ops);    
 }
 
 void
