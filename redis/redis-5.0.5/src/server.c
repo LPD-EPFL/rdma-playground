@@ -2765,8 +2765,8 @@ int prepareForShutdown(int flags) {
     serverLog(LL_WARNING,"User requested shutdown...");
 
     // Added by SaGGy00
-    // consensus_stop_leader_election();
-    // consensus_shutdown();
+    consensus_stop_leader_election();
+    consensus_shutdown();
 
     /* Kill all the Lua debugger forked sessions. */
     ldbKillForkedSessions();
@@ -4018,7 +4018,7 @@ int main(int argc, char **argv) {
 
     // Added by SaGGy00
     consensus_setup();
-    // consensus_start_leader_election();
+    consensus_start_leader_election();
 
 #ifdef REDIS_TEST
     if (argc == 3 && !strcasecmp(argv[1], "test")) {

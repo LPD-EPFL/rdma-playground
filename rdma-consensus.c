@@ -350,7 +350,7 @@ void init_ctx_common(struct global_context* ctx, bool is_le)
            read_buf = (void*)ctx->qps[i].buf_copy.log;
 
            // give read-write access to 0 and read-only access to everybody else (initially) 
-           int flags = (i == 0) ? (IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE) 
+           int flags = (i == 1) ? (IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE) 
                             : (IBV_ACCESS_REMOTE_READ  | IBV_ACCESS_LOCAL_WRITE);
             // create the MR that we write from and others write into
             TEST_Z(ctx->qps[i].mr_write = ibv_reg_mr(ctx->pd, write_buf, ctx->len, 

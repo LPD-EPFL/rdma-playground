@@ -27,6 +27,35 @@ spawn_leader_election_thread() {
     TEST_NZ(pthread_create(&le_thread, NULL, leader_election, NULL), "Could not create leader election thread");
 }
 
+void * check_permission_loop(void * arg) {
+
+    while (1) {
+        check_permission_requests();
+    }
+        
+    // Return value from thread
+    return NULL;
+}
+
+void start_permission_checking() {
+
+    // Added for testing purposes
+    pthread_t threadId;
+
+    // Create a thread that will funtion threadFunc()
+    int err = pthread_create(&threadId, NULL, &check_permission_loop, NULL);
+    // Check if thread is created sucessfuly
+    if (err) {
+        emergency_shutdown("Could not create a detached thread");
+    }
+    
+    err = pthread_detach(threadId);
+    // Check if thread is created sucessfuly
+    if (err) {
+        emergency_shutdown("Could not create a detached thread");
+    }
+}
+
 void*
 leader_election(void* arg) {
     le_ctx = create_ctx();
@@ -70,6 +99,8 @@ leader_election(void* arg) {
     }
 
     barrier_cross(&entry_barrier);
+
+    start_permission_checking();
         
     // start the leader election loop
     while (!stop_le) {
@@ -86,13 +117,13 @@ leader_election(void* arg) {
         // TIMED_LOOP(LE_COUNTER_READ_PERIOD_SEC)
         // check_permission_requests();
         // TIMED_LOOP_END()
-        clock_t begin = clock();
-        while (((double)(clock() - begin) / CLOCKS_PER_SEC) < LE_COUNTER_READ_PERIOD_SEC) {
-            check_permission_requests();
-        }
+        // clock_t begin = clock();
+        // while (((double)(clock() - begin) / CLOCKS_PER_SEC) < LE_COUNTER_READ_PERIOD_SEC) {
+        //     check_permission_requests();
+        // }
 
         // sleep
-        // nanosleep((const struct timespec[]){{0, LE_SLEEP_DURATION_NS}}, NULL);
+        nanosleep((const struct timespec[]){{0, LE_SLEEP_DURATION_NS}}, NULL);
     }
 
     destroy_ctx(&le_ctx, true);
@@ -163,18 +194,40 @@ decide_leader() {
     return le_ctx.my_index;
 }
 
+// wait for permission acks
+// n = how many acks to wait for
+static void
+wait_for_perm_ack(int n) {
+    int acks = 0;
+    uint64_t len = le_ctx.buf.le_data->len;
+    int got_ack[len] = { 0 };
+
+    while (acks < n) {
+        for (int i = 0; i < len; ++i) {
+            if (!got_ack[i] && le_ctx.buf.le_data->perm_reqs_acks[i].ack == 1) {
+                le_ctx.buf.le_data->perm_reqs_acks[i].ack = 0;
+                got_ack[i] = 1;
+                printf("Got ack from %d\n", i);
+                acks += 1;
+            }
+        }
+    }
+}
+
 // TODO: we want this to also revoke the access of my current leader to my memory
 void
 rdma_ask_permission(le_data_t* le_data, uint64_t my_index, bool signaled) {
+
+    printf("Asking for permission\n");
 
     void* local_address;
     uint64_t remote_addr;
     size_t req_size;
     uint64_t wrid = 0;
 
-    le_data->perm_reqs[my_index] = 1; // I want to get permission for myself
+    le_data->perm_reqs_acks[my_index].req = 1; // I want to get permission for myself
 
-    local_address = &le_data->perm_reqs[my_index];
+    local_address = &le_data->perm_reqs_acks[my_index].req;
     req_size = sizeof(uint8_t);
 
     g_ctx.round_nb++;
@@ -190,7 +243,44 @@ rdma_ask_permission(le_data_t* le_data, uint64_t my_index, bool signaled) {
 
     struct ibv_wc wc_array[le_ctx.num_clients];
 
+    // wait for at least one permission request to be successfully sent
     wait_for_n(1, g_ctx.round_nb, &le_ctx, le_ctx.num_clients, wc_array, g_ctx.completed_ops);
+
+    // wait for at least one permission ack to arrive
+    wait_for_perm_ack(2);
+}
+
+
+
+static void
+send_perm_ack(int index) {
+    printf("Sending ack to %d\n", index);
+
+    void* local_address;
+    uint64_t remote_addr;
+    size_t req_size;
+    uint64_t wrid = 0;
+
+    int my_index = (index < le_ctx.my_index) ? le_ctx.my_index-1 : le_ctx.my_index; // my index in the other side's qps array
+    printf("Sending ack to %d, my index in their array is %d\n", index, my_index);
+    le_ctx.buf.le_data->perm_reqs_acks[my_index].ack = 1;
+
+    local_address = &le_ctx.buf.le_data->perm_reqs_acks[my_index].ack;
+    req_size = sizeof(uint8_t);
+
+    g_ctx.round_nb++;
+    WRID_SET_SSN(wrid, g_ctx.round_nb);
+    WRID_SET_CONN(wrid, index);
+    remote_addr = le_data_get_remote_address(le_ctx.buf.le_data, local_address, ((le_data_t*)le_ctx.qps[index].remote_connection.vaddr));
+    post_send(le_ctx.qps[index].qp, local_address, req_size, le_ctx.qps[index].mr_write->lkey, le_ctx.qps[index].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, wrid, true);
+   
+
+    nanosleep((const struct timespec[]){{0, SHORT_SLEEP_DURATION_NS}}, NULL);
+
+    struct ibv_wc wc_array[le_ctx.num_clients];
+
+    // wait for at least one permission ack to be successfully sent
+    wait_for_n(1, g_ctx.round_nb, &le_ctx, le_ctx.num_clients, wc_array, g_ctx.completed_ops);    
 }
 
 void
@@ -200,13 +290,13 @@ check_permission_requests() {
     for (int i = 0; i < le_ctx.buf.le_data->len; ++i) {
         if (i == le_ctx.my_index) continue;
 
-        if (le_ctx.buf.le_data->perm_reqs[i] == 1) { // there is a request from i
-            printf("Permission request from %d\n", i);
+        if (le_ctx.buf.le_data->perm_reqs_acks[i].req == 1) { // there is a request from i
 
-            le_ctx.buf.le_data->perm_reqs[i] = 0;
+            le_ctx.buf.le_data->perm_reqs_acks[i].req = 0;
 
             // change permission on g_ctx
             j = (i < le_ctx.my_index) ? i : i-1; // i indexes into perm_reqs (n entries total), j indexes into qps (n-1 entries total)
+            printf("Permission request from %d, my_index = %d, j = %d\n", i, le_ctx.my_index, j);
             permission_switch(g_ctx.qps[g_ctx.cur_write_permission].mr_write, // mr losing permission
                               g_ctx.qps[j].mr_write, // mr gaining permission
                               g_ctx.pd,
@@ -214,13 +304,16 @@ check_permission_requests() {
                               g_ctx.len,
                               (IBV_ACCESS_REMOTE_READ  | IBV_ACCESS_LOCAL_WRITE),
                               (IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE));
-            g_ctx.cur_write_permission = j; 
+            g_ctx.cur_write_permission = j;
+
+            // send ack
+            send_perm_ack(j); 
 
         }
     }
-    
-    // printf("Done checking permissions\n");
 }
+
+
 
 void
 start_leader_election() {

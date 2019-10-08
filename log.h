@@ -37,10 +37,16 @@ struct counter {
 };
 typedef struct counter counter_t;
 
+struct req_ack {
+    uint8_t req;
+    uint8_t ack;
+};
+typedef struct req_ack req_ack_t;
+
 struct le_data {
     counter_t counters;
     uint64_t len; // nb of entries in perm_reqs
-    uint8_t perm_reqs[0];
+    req_ack_t perm_reqs_acks[0];
 };
 typedef struct le_data le_data_t;
 
@@ -49,12 +55,12 @@ typedef struct le_data le_data_t;
 
 static le_data_t* 
 le_data_new(uint64_t len) {
-    le_data_t *le_data = (le_data_t*) malloc(sizeof(le_data_t) + len);
+    le_data_t *le_data = (le_data_t*) malloc(sizeof(le_data_t) + len * sizeof(req_ack_t));
     if (NULL == le_data) {
         return NULL;
     }
 
-    memset(le_data, 0, sizeof(le_data_t) + len);
+    memset(le_data, 0, sizeof(le_data_t) + len * sizeof(req_ack_t));
     le_data->len = len;
 
     return le_data;
@@ -70,7 +76,7 @@ le_data_free( le_data_t* le_data ) {
 
 static size_t
 le_data_size( le_data_t* le_data) {
-    return (sizeof(le_data_t) + le_data->len);
+    return (sizeof(le_data_t) + le_data->len * sizeof(req_ack_t));
 }
 
 static uint64_t

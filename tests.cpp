@@ -118,10 +118,77 @@ TEST(RDMATest, LeaderElectionCheckPermissions) {
 TEST(RDMATest, LeaderElectionAskPermission) {
     start_leader_election();
 
-    if (g_ctx.my_index == 1) {
+    if (g_ctx.my_index == 0) {
         printf("Asking for permission...\n");
         rdma_ask_permission(le_ctx.buf.le_data, le_ctx.my_index, true);
         // sleep(1);
+        printf("0 trying to write to 2 -> should succeed\n");
+        post_send(g_ctx.qps[1].qp, g_ctx.buf.log, sizeof(uint64_t), g_ctx.qps[1].mr_write->lkey, g_ctx.qps[1].remote_connection.rkey, g_ctx.qps[1].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
+        // check the CQ
+        sleep(1);
+        int ne;
+        struct ibv_wc wc;
+
+        do {
+            ne = ibv_poll_cq(g_ctx.cq, 1, &wc);
+
+            if (ne > 0) {
+                printf("Work completion with id %llu has status %s (%d) \n", wc.wr_id, ibv_wc_status_str(wc.status), wc.status);
+                sleep(1);
+            } else {
+                printf("ne was %d\n", ne);
+            }
+        } while(ne > 0);
+    } else if (g_ctx.my_index == 1) {
+        sleep(2);
+        printf("1 trying to write to 0 -> should succeed\n");
+        post_send(g_ctx.qps[0].qp, g_ctx.buf.log, sizeof(uint64_t), g_ctx.qps[0].mr_write->lkey, g_ctx.qps[0].remote_connection.rkey, g_ctx.qps[0].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
+        printf("1 trying to write to 2 -> should not succeed\n");
+        post_send(g_ctx.qps[1].qp, g_ctx.buf.log, sizeof(uint64_t), g_ctx.qps[1].mr_write->lkey, g_ctx.qps[1].remote_connection.rkey, g_ctx.qps[1].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 43, true);
+
+        // check the CQ
+        sleep(1);
+        int ne;
+        struct ibv_wc wc;
+
+        do {
+            ne = ibv_poll_cq(g_ctx.cq, 1, &wc);
+
+            if (ne > 0) {
+                printf("Work completion with id %llu has status %s (%d) \n", wc.wr_id, ibv_wc_status_str(wc.status), wc.status);
+                sleep(1);
+            } else {
+                printf("ne was %d\n", ne);
+            }
+        } while(ne > 0);
+    } else {
+        sleep(5);
+    }
+
+    stop_leader_election();
+    shutdown_leader_election_thread();
+}
+
+TEST(RDMATest, DetectLeaderFailure) {
+    start_leader_election();
+    sleep(1);
+    if (g_ctx.my_index != 0) {
+        sleep(3);
+        stop_leader_election();
+    } else {
+        stop_leader_election();
+        sleep(3);
+    }
+    shutdown_leader_election_thread();
+}
+
+TEST(RDMATest, LeaderElectionAskPermission2) {
+    start_leader_election();
+
+    if (g_ctx.my_index == 1) {
+        printf("Asking for permission...\n");
+        rdma_ask_permission(le_ctx.buf.le_data, le_ctx.my_index, true);
+        sleep(1);
         printf("1 trying to write to 0 -> should succeed\n");
         post_send(g_ctx.qps[0].qp, g_ctx.buf.log, sizeof(uint64_t), g_ctx.qps[0].mr_write->lkey, g_ctx.qps[0].remote_connection.rkey, g_ctx.qps[0].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
         // check the CQ
@@ -169,23 +236,10 @@ TEST(RDMATest, LeaderElectionAskPermission) {
     shutdown_leader_election_thread();
 }
 
-TEST(RDMATest, DetectLeaderFailure) {
-    start_leader_election();
-    sleep(1);
-    if (g_ctx.my_index != 0) {
-        sleep(3);
-        stop_leader_election();
-    } else {
-        stop_leader_election();
-        sleep(3);
-    }
-    shutdown_leader_election_thread();
-}
-
 TEST(RDMATest, Propose) {
     uint64_t val;
 
-    // start_leader_election();
+    start_leader_election();
 
     if (g_ctx.my_index == 0) {
         val = 42;
@@ -200,8 +254,8 @@ TEST(RDMATest, Propose) {
         log_print(g_ctx.buf.log);
     }
 
-    // stop_leader_election();
-    // shutdown_leader_election_thread();
+    stop_leader_election();
+    shutdown_leader_election_thread();
 }
 
 TEST(RDMATest, UnexpectedError) {
