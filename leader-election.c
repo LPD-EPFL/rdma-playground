@@ -15,15 +15,15 @@ barrier_t entry_barrier, exit_barrier;
 
 #define TIMED_LOOP(duration)                                                \
 {   clock_t __begin = clock();                                              \
-    while (((double)(clock() - __begin) / CLOCKS_PER_SEC) < (duration)) { 
+    while (((double)(clock() - __begin) / CLOCKS_PER_SEC) < (duration)) {
 
 #define TIMED_LOOP_END() }}
-        
+
 
 void
 spawn_leader_election_thread() {
     pthread_t le_thread;
-    
+
     TEST_NZ(pthread_create(&le_thread, NULL, leader_election, NULL), "Could not create leader election thread");
 }
 
@@ -31,6 +31,7 @@ void*
 leader_election(void* arg) {
     le_ctx = create_ctx();
     // create & initialize a le context
+    le_ctx.my_index           = g_ctx.my_index;
     le_ctx.ib_dev             = g_ctx.ib_dev;
     le_ctx.context            = g_ctx.context;
     le_ctx.num_clients        = g_ctx.num_clients;
@@ -38,12 +39,11 @@ leader_election(void* arg) {
     le_ctx.ib_port            = g_ctx.ib_port;
     le_ctx.tx_depth           = g_ctx.tx_depth;
     le_ctx.servername         = g_ctx.servername;
-    le_ctx.sockfd             = g_ctx.sockfd;
-
+    le_ctx.registry = dory_registry_create_from(g_ctx.registry);
 
     init_ctx_common(&le_ctx, true); // true = leader election thread
 
-    parse_config(config_file, &le_ctx);
+    // parse_config(config_file, &le_ctx);
 
     // we don't need a log structure in the leader election thread
     // for now, zero it out and interpret it as a counter
@@ -53,14 +53,13 @@ leader_election(void* arg) {
     set_local_ib_connection(&le_ctx, true); // true = leader election thread
 
 
-    TEST_NZ(tcp_exch_ib_connection_info(&le_ctx),
-            "Could not exchange connection, tcp_exch_ib_connection");
+    exchange_ib_connection_info(&le_ctx, "leader-election");
 
     // Print IB-connection details
     printf("Leader election connections:\n");
     for (int i = 0; i < le_ctx.num_clients; ++i) {
         print_ib_connection("Local  Connection", &le_ctx.qps[i].local_connection);
-        print_ib_connection("Remote Connection", &le_ctx.qps[i].remote_connection);    
+        print_ib_connection("Remote Connection", &le_ctx.qps[i].remote_connection);
     }
 
 
@@ -70,7 +69,7 @@ leader_election(void* arg) {
     }
 
     barrier_cross(&entry_barrier);
-        
+
     // start the leader election loop
     while (!stop_le) {
         // increment a local counter
@@ -96,9 +95,9 @@ leader_election(void* arg) {
     }
 
     destroy_ctx(&le_ctx, true);
-    
+
     barrier_cross(&exit_barrier);
-    pthread_exit(NULL);   
+    pthread_exit(NULL);
 }
 
 void
@@ -148,7 +147,7 @@ decide_leader() {
             // printf("Node %d is my leader\n", i);
             return i;
         }
-        
+
         // if there is no concurrent read of the counters in progress, look at the most recent read counter as well
         if (le_ctx.completed_ops[i] == le_ctx.round_nb) {
             if (counters->count_cur != counters->count_old) {
@@ -214,11 +213,11 @@ check_permission_requests() {
                               g_ctx.len,
                               (IBV_ACCESS_REMOTE_READ  | IBV_ACCESS_LOCAL_WRITE),
                               (IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE));
-            g_ctx.cur_write_permission = j; 
+            g_ctx.cur_write_permission = j;
 
         }
     }
-    
+
     // printf("Done checking permissions\n");
 }
 
