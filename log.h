@@ -5,8 +5,11 @@
 extern "C" {
 #endif
 
+#include <sys/mman.h>
+#include <assert.h>
+
 #define DEFAULT_VALUE_SIZE 8 // value size if it is uint64_t
-#define DEFAULT_LOG_LENGTH 1000000
+#define DEFAULT_LOG_LENGTH (2ul * 1024 * 1024)
 #define CACHE_LINE_SIZE    64
 
 struct value_t {
@@ -91,13 +94,29 @@ le_data_get_remote_address(le_data_t* local_le_data, void* local_offset, le_data
 // len = the size in bytes to allocate for slots
 static log_t* 
 log_new() {
-    log_t *log = (log_t*) malloc(sizeof(log_t) + DEFAULT_LOG_LENGTH);
-    if (NULL == log) {
+
+    size_t size = DEFAULT_LOG_LENGTH;
+    void* m = mmap(NULL, size, PROT_READ | PROT_WRITE,
+
+                    MAP_SHARED | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
+
+    if (m == MAP_FAILED) {
+        perror("map mem");
+        m = NULL;
         return NULL;
     }
 
-    memset(log, 0, sizeof(log_t) + DEFAULT_LOG_LENGTH);
-    log->len = DEFAULT_LOG_LENGTH;
+    uint64_t alignment = 2UL * 1024 * 1024;
+    assert((uint64_t)m % alignment == 0 && "Not aligned");
+
+    // log_t *log = (log_t*) malloc(sizeof(log_t) + DEFAULT_LOG_LENGTH);
+    // if (NULL == log) {
+    //     return NULL;
+    // }
+    log_t *log = (log_t *)m;
+
+    memset(log, 0, size);
+    log->len = size - sizeof(log_t);
 
     return log;
 }
@@ -108,7 +127,7 @@ static void
 log_free( log_t* log )
 {
     if (NULL != log) {
-        free(log);
+        munmap(log, log->len + sizeof(log_t));
         log = NULL;
     }
 }

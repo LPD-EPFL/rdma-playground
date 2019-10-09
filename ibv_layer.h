@@ -13,11 +13,11 @@ void print_ib_connection(const char *conn_name, struct ib_connection *conn);
 int tcp_exch_ib_connection_info(struct global_context* ctx);
 
 int qp_change_state_reset( struct qp_context *qpc );
-int qp_change_state_init(struct qp_context *qpc, int ib_port);
-int qp_change_state_rtr(struct qp_context *qpc, int ib_port);
-int qp_change_state_rts(struct qp_context *qpc, int ib_port);
+int qp_change_state_init(struct qp_context *qpc);
+int qp_change_state_rtr(struct qp_context *qpc);
+int qp_change_state_rts(struct qp_context *qpc);
 void rc_qp_destroy( struct ibv_qp *qp, struct ibv_cq *cq );
-int qp_restart( struct qp_context *qpc, int ib_port);
+int qp_restart( struct qp_context *qpc);
 
 void rdma_write(int id);
 void rdma_read(int id);
@@ -148,12 +148,13 @@ static int wait_for_n_inner(  int n,
                 }
 
             } else if (ret == WC_EXPECTED_ERROR) {
+                printf("Expected error\n");
                 if (wc_array[i].opcode == IBV_WC_RDMA_READ) {
                     // didn't manage to read due to permissions -> problem
                     return -1;
                 }
                 cid = WRID_GET_CONN(wr_id);
-                qp_restart(&ctx->qps[cid], ctx->ib_port);
+                qp_restart(&ctx->qps[cid]);
             } else { // unexpected error
                 return -1;
             }
@@ -196,7 +197,10 @@ post_send_inner(  struct ibv_qp* qp,
     wr.num_sge    = 1;
     wr.opcode     = opcode;
     if (signaled) {
-        wr.send_flags = IBV_SEND_SIGNALED;
+        wr.send_flags |= IBV_SEND_SIGNALED;
+    }
+    if (opcode == IBV_WR_RDMA_WRITE && len <= MAX_INLINE_DATA) {
+        wr.send_flags |= IBV_SEND_INLINE;
     }
     wr.wr.rdma.remote_addr = remote_addr;
     wr.wr.rdma.rkey = rkey;

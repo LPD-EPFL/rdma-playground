@@ -141,7 +141,7 @@ void tcp_client_connect()
     // socklen_t clientlen = sizeof(clientaddr);
 
     
-    TEST_N(asprintf(&service, "%d", g_ctx.port),
+    TEST_N(asprintf(&service, "%d", IP_PORT),
             "Error writing port-number to port-string");
 
     for (int i = 0; i < g_ctx.my_index; ++i) {
@@ -186,7 +186,7 @@ void tcp_server_listen() {
     struct sockaddr_in clientaddr;
     socklen_t clientlen = sizeof(clientaddr);
 
-    TEST_N(asprintf(&service, "%d", g_ctx.port),
+    TEST_N(asprintf(&service, "%d", IP_PORT),
             "Error writing port-number to port-string");
 
 
@@ -261,21 +261,21 @@ void init_buf_consensus(struct global_context* ctx) {
         ctx->qps[i].buf_copy.log = log_new();
     }
 
-    // Added for testing purposes
-    pthread_t threadId;
+    // // Added for testing purposes
+    // pthread_t threadId;
 
-    // Create a thread that will funtion threadFunc()
-    int err = pthread_create(&threadId, NULL, &threadFunc, (void *) g_ctx.buf.log);
-    // Check if thread is created sucessfuly
-    if (err) {
-	    emergency_shutdown("Could not create a detached thread");
-    }
+    // // Create a thread that will funtion threadFunc()
+    // int err = pthread_create(&threadId, NULL, &threadFunc, (void *) g_ctx.buf.log);
+    // // Check if thread is created sucessfuly
+    // if (err) {
+	   //  emergency_shutdown("Could not create a detached thread");
+    // }
 	
-    err = pthread_detach(threadId);
-    // Check if thread is created sucessfuly
-    if (err) {
-	    emergency_shutdown("Could not create a detached thread");
-    }
+    // err = pthread_detach(threadId);
+    // // Check if thread is created sucessfuly
+    // if (err) {
+	   //  emergency_shutdown("Could not create a detached thread");
+    // }
 }
 
 /*
@@ -325,7 +325,7 @@ void init_ctx_common(struct global_context* ctx, bool is_le)
             "Could not create completion channel, ibv_create_comp_channel");
 
 
-    TEST_Z(ctx->cq = ibv_create_cq(ctx->context,ctx->tx_depth, NULL,  ctx->ch, 0),
+    TEST_Z(ctx->cq = ibv_create_cq(ctx->context, MAX_SEND_WR, NULL, ctx->ch, COMP_VECTOR),
                 "Could not create completion queue, ibv_create_cq"); 
 
     if (!is_le) {
@@ -345,7 +345,7 @@ void init_ctx_common(struct global_context* ctx, bool is_le)
            read_buf = (void*)ctx->qps[i].buf_copy.log;
 
            // give read-write access to 0 and read-only access to everybody else (initially) 
-           int flags = (i == 1) ? (IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE) 
+           int flags = (i == 0) ? (IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE) 
                             : (IBV_ACCESS_REMOTE_READ  | IBV_ACCESS_LOCAL_WRITE);
             // create the MR that we write from and others write into
             TEST_Z(ctx->qps[i].mr_write = ibv_reg_mr(ctx->pd, write_buf, ctx->len, 
@@ -364,16 +364,16 @@ void init_ctx_common(struct global_context* ctx, bool is_le)
         qp_init_attr.send_cq = ctx->cq;
         qp_init_attr.recv_cq = ctx->cq;
         qp_init_attr.qp_type = IBV_QPT_RC;
-        qp_init_attr.cap.max_send_wr = ctx->tx_depth;
-        qp_init_attr.cap.max_recv_wr = 1;
-        qp_init_attr.cap.max_send_sge = 1;
-        qp_init_attr.cap.max_recv_sge = 1;
-        qp_init_attr.cap.max_inline_data = 0;
+        qp_init_attr.cap.max_send_wr = MAX_SEND_WR;
+        qp_init_attr.cap.max_recv_wr = MAX_RECV_WR;
+        qp_init_attr.cap.max_send_sge = MAX_SEND_SGE;
+        qp_init_attr.cap.max_recv_sge = MAX_RECV_SGE;
+        qp_init_attr.cap.max_inline_data = MAX_INLINE_DATA;
 
         TEST_Z(ctx->qps[i].qp = ibv_create_qp(ctx->pd, &qp_init_attr),
                 "Could not create queue pair, ibv_create_qp");    
         
-        qp_change_state_init(&ctx->qps[i], ctx->ib_port);        
+        qp_change_state_init(&ctx->qps[i]);        
     }
 }
 

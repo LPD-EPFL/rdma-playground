@@ -5,6 +5,10 @@
 extern "C" {
 #endif
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE 1
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +17,7 @@ extern "C" {
 #include <stdint.h>
 #include <errno.h>
 #include <pthread.h>
+#include <sched.h>
 
 
 #include <arpa/inet.h>
@@ -25,10 +30,8 @@ extern "C" {
 #include <infiniband/verbs.h>
 
 #include "log.h"
+#include "constants.h"
 
-#define SHORT_SLEEP_DURATION_NS     10*1000 // 10 us = 10 * 1'000 ns
-#define LE_SLEEP_DURATION_NS        999*1000*1000 // 100 ms = 100 * 1'000'000 ns
-#define LE_COUNTER_READ_PERIOD_SEC  0.1 // 100 ms
 
 typedef enum {SLOT, MIN_PROPOSAL} write_location_t;
 
@@ -118,9 +121,6 @@ struct global_context {
     struct qp_context           *qps;
     uint64_t                    round_nb;
     int                         num_clients;
-    int                         port;
-    int                         ib_port;
-    int                         tx_depth;
     int                         *sockfd;
     char                        *servername;
     char                        my_ip_address[NI_MAXHOST];
@@ -135,6 +135,18 @@ struct global_context {
     size_t                      len; // length of buf in bytes (used when registering MRs)
     uint64_t                    *completed_ops;
 };
+
+static void
+set_cpu(int cpu) {
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(cpu, &cpuset);
+    pthread_t thread = pthread_self();
+    if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset)) {
+        fprintf(stderr, "Error setting cpu affinity\n");
+    }
+}
+
 
 struct global_context create_ctx(); 
 

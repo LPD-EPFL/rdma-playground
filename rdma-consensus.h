@@ -5,20 +5,13 @@
 extern "C" {
 #endif
 
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE 1
-#endif
-
 #if HAVE_CONFIG_H
 #  include <config.h>
 #endif /* HAVE_CONFIG_H */
 
-#define RDMA_WRID 3
-#define SHORT_SLEEP_DURATION 1
 
-
-#include "ibv_layer.h"
 #include "utils.h"
+#include "ibv_layer.h"
 #include "leader-election.h"
 
 

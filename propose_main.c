@@ -2,7 +2,8 @@
 
 int main() {
         consensus_setup();
-        //consensus_propose();
+        consensus_propose_test2();
+        getchar();
         consensus_shutdown();
 
         return 0;

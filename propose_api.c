@@ -1,13 +1,14 @@
-#include <assert.h>
 #include "rdma-consensus.h"
 #include "consensus-protocol.h"
 #include "leader-election.h"
+#include <assert.h>
+#include <sys/time.h>
 
 static int page_size;
 static int sl = 1;
 static pid_t pid;
 
-const char* config_file = "./config";
+const char* config_file = CONFIG_FILE_NAME;
 
 int leader = 0;
 
@@ -22,20 +23,19 @@ bool isValidIpAddress(char *ipAddress) {
 }
 
 void consensus_setup() {
+
+        set_cpu(MAIN_THREAD_CPU);
         printf("Setup\n");
         pid = getpid();
 
         g_ctx = create_ctx();
 
         assert(pid);
-        assert(g_ctx.port);
-        assert(g_ctx.ib_port);
         assert(g_ctx.len == (uint64_t)0);
-        assert(g_ctx.tx_depth);
         assert(sl);
 
         printf("PID=%d | port=%d | ib_port=%d | size=%lu | tx_depth=%d | sl=%d |\n",
-            pid, g_ctx.port, g_ctx.ib_port, g_ctx.len, g_ctx.tx_depth, sl);
+            pid, IP_PORT, IB_PORT, g_ctx.len, MAX_SEND_WR, sl);
 
         // Is later needed to create random number for psn
         srand48(pid * time(NULL));
@@ -73,7 +73,7 @@ void consensus_setup() {
         }
 
         for (int i = 0; i < g_ctx.num_clients; ++i) {
-            qp_change_state_rts(&g_ctx.qps[i], g_ctx.ib_port);
+            qp_change_state_rts(&g_ctx.qps[i]);
         }
         printf("Main thred QPs changed to RTS mode\n");
 }
@@ -94,7 +94,7 @@ bool consensus_propose(uint8_t *buf, size_t len) {
 void consensus_propose_test1() {
     uint64_t val;
 
-    // start_leader_election();
+    start_leader_election();
 
     if (g_ctx.my_index == 0) {
         val = 42;
@@ -108,17 +108,71 @@ void consensus_propose_test1() {
         sleep(1);
         log_print(g_ctx.buf.log);
     }
+    
+
+    stop_leader_election();
+    shutdown_leader_election_thread();
+}
+
+void consensus_propose_test2() {
+    uint64_t val;
+
+    start_leader_election();       
+
+    if (g_ctx.my_index == 0) {
+        propose((uint8_t*)&val, sizeof(val)); 
+        
+        struct timeval start, end;
+        gettimeofday(&start, NULL);
+        val = 42;
+        for (int i = 0; i < TEST_SIZE; ++i) {
+            propose((uint8_t*)&val, sizeof(val));        
+        }
+        gettimeofday(&end, NULL);
+        uint64_t duration = (end.tv_sec * 1000000 + end.tv_usec) - (start.tv_sec * 1000000 + start.tv_usec );
+        double avg_latency = (1.0 * duration) / TEST_SIZE;
+        printf("Average latency = %.2f\n", avg_latency);
+    } else {
+        sleep(5);
+        log_print(g_ctx.buf.log);
+    }
+
+    stop_leader_election();
+    shutdown_leader_election_thread();
+}
+
+void consensus_propose_test3() {
+    uint64_t val;
+    struct ibv_wc wc_array[g_ctx.num_clients];
+    struct timeval start, end;
+
+
+    if (g_ctx.my_index == 0) {
+
+        bool signaled;
+        signaled = true;
+
+        gettimeofday(&start, NULL);
+        for (int i = 0; i < TEST_SIZE; i++) {
+            if (g_ctx.round_nb % 64 == 0) {
+                signaled = true;
+            } else {
+                signaled = true;
+            }
+            rdma_write_to_all(g_ctx.buf.log, 0, SLOT, signaled);
+            if (signaled) {
+                wait_for_n(1, g_ctx.round_nb, &g_ctx, g_ctx.num_clients, wc_array, g_ctx.completed_ops);
+            }
+        }
+        gettimeofday(&end, NULL);
+        uint64_t duration = (end.tv_sec * 1000000 + end.tv_usec) - (start.tv_sec * 1000000 + start.tv_usec );
+        double avg_latency = (1.0 * duration) / TEST_SIZE;
+        printf("Average latency = %.2f\n", avg_latency);
+    } else {
+        sleep(5);
+    }
 
     // stop_leader_election();
     // shutdown_leader_election_thread();
 }
 
-/*
-int main() {
-	consensus_setup();
-	consensus_propose();
-	consensus_shutdown();
-
-	return 0;
-}
-*/

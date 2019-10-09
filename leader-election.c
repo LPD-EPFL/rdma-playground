@@ -29,6 +29,8 @@ spawn_leader_election_thread() {
 
 void * check_permission_loop(void * arg) {
 
+    set_cpu(PERM_THREAD_CPU);
+
     while (1) {
         check_permission_requests();
     }
@@ -58,15 +60,14 @@ void start_permission_checking() {
 
 void*
 leader_election(void* arg) {
+    set_cpu(LE_THREAD_CPU);
+
     le_ctx = create_ctx();
     // create & initialize a le context
     le_ctx.ib_dev             = g_ctx.ib_dev;
     le_ctx.context            = g_ctx.context;
     le_ctx.pd                 = g_ctx.pd;
     le_ctx.num_clients        = g_ctx.num_clients;
-    le_ctx.port               = g_ctx.port;
-    le_ctx.ib_port            = g_ctx.ib_port;
-    le_ctx.tx_depth           = g_ctx.tx_depth;
     le_ctx.servername         = g_ctx.servername;
     le_ctx.sockfd             = g_ctx.sockfd;
 
@@ -96,7 +97,7 @@ leader_election(void* arg) {
 
     // bring the qps to the right states
     for (int i = 0; i < le_ctx.num_clients; ++i) {
-        qp_change_state_rts(&le_ctx.qps[i], le_ctx.ib_port);
+        qp_change_state_rts(&le_ctx.qps[i]);
     }
 
     barrier_cross(&entry_barrier);

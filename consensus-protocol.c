@@ -9,6 +9,7 @@ extern struct global_context le_ctx;
 bool need_prepare_phase = true;
 bool need_init = true;
 uint64_t g_prop_nr = 0;
+value_t* v = NULL;
 
 bool
 propose(uint8_t* buf, size_t len) {
@@ -19,14 +20,14 @@ propose(uint8_t* buf, size_t len) {
         g_prop_nr = g_ctx.my_index + g_ctx.num_clients + 1;
     }
 
-    printf("Proposing %lu \n", *(uint64_t*)buf);
+    // printf("Proposing %lu \n", *(uint64_t*)buf);
     while (!done) {
         if (leader != g_ctx.my_index) {
             return false;
         }
 
         if (need_init) {
-            rdma_ask_permission(le_ctx.buf.le_data, le_ctx.my_index, true); // should always succeed
+            // rdma_ask_permission(le_ctx.buf.le_data, le_ctx.my_index, true); // should always succeed
 
             rc = update_followers();
             if (rc) continue;
@@ -45,12 +46,12 @@ propose_inner(uint8_t* buf, size_t len) {
     int rc;
     bool inner_done = false;
     uint64_t offset = 0;
-    value_t* v;
+    
     value_t* freshVal = NULL;
 
     while (!inner_done) {
         offset = g_ctx.buf.log->firstUndecidedOffset;
-        printf("Offset is %lu \n", offset);
+        // printf("Offset is %lu \n", offset);
         if (need_prepare_phase) {
             rc = read_min_proposals(); // should always succeed
             if (rc) {need_init = true; return false;}
@@ -71,13 +72,17 @@ propose_inner(uint8_t* buf, size_t len) {
         }
 
         if (freshVal != NULL && freshVal->len != 0) {
-            printf("Found accepted value: %lu\n", *(uint64_t*)freshVal->val);
+            // printf("Found accepted value: %lu\n", *(uint64_t*)freshVal->val);
             v = freshVal;
         } else {
             need_prepare_phase = false;
             // adopt my value
-            printf("About to adopt my value\n");
-            v = new_value(buf, len);
+            // printf("About to adopt my value\n");
+            if (v == NULL) {
+                v = new_value(buf, len);
+            } else {
+                // memcpy(v->val, buf, len);
+            }
         }
 
 
@@ -85,13 +90,13 @@ propose_inner(uint8_t* buf, size_t len) {
         rc = write_log_slot(g_ctx.buf.log, offset, v);
         if (rc) {need_init = true; need_prepare_phase = true; return false;}
 
-        if (memcmp(v->val, buf, len) == 0) { // I managed to replicate my value
-            printf("Inner propose is done\n");
+        // if (memcmp(v->val, buf, len) == 0) { // I managed to replicate my value
+            // printf("Inner propose is done\n");
             inner_done = true;
-            free_value(v);
-        } else {
-            printf("Inner propose is not done\n");
-        }
+            // free_value(v);
+        // } else {
+            // printf("Inner propose is not done\n");
+        // }
         // increment the firstUndecidedOffset
         log_increment_fuo(g_ctx.buf.log);    
     }
@@ -160,7 +165,7 @@ min_proposal_ok() {
 int
 write_log_slot(log_t* log, uint64_t offset, value_t* value) {
 
-    printf("Value length %lu - last byte %u\n", value->len, value->val[value->len-1]);
+    // printf("Value length %lu - last byte %u\n", value->len, value->val[value->len-1]);
     // if (value->len <= 8) {
     //     printf("Write log slot uint64 %lu, %lu\n", offset, *(uint64_t*)value->val);
     //     log_write_local_slot_uint64(log, offset, g_prop_nr, *(uint64_t*)value->val);
@@ -169,12 +174,21 @@ write_log_slot(log_t* log, uint64_t offset, value_t* value) {
     //     log_write_local_slot_string(log, offset, g_prop_nr, (char*)value->val);        
     // }
 
-    log_write_local_slot(log, offset, g_prop_nr, value);
+    log_write_local_slot_uint64(log, offset, g_prop_nr, 42);
+    // log_write_local_slot(log, offset, g_prop_nr, value);
 
     // post sends to everyone
-    rdma_write_to_all(log, offset, SLOT, true);
+    bool signaled = false;
+    // if (g_ctx.round_nb % BATCH_SIZE == 0) {
+        signaled = true;
+    // }
+    rdma_write_to_all(log, offset, SLOT, signaled);
     
-    return wait_for_majority(); 
+    if (signaled) {
+        return wait_for_majority();
+    } 
+
+    return 0; 
 }
 
 void
@@ -323,7 +337,7 @@ freshest_accepted_value(uint64_t offset) {
 
 int
 wait_for_majority() {
-    int majority = (g_ctx.num_clients/2) + 1;
+    int majority = ((g_ctx.num_clients+1)/2);
 
     // array to store the work completions inside wait_for_n
     // we might want to place this in the global context later

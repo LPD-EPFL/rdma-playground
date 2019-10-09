@@ -6,6 +6,8 @@
 
 void consensus_setup();
 void consensus_propose_test1();
+void consensus_propose_test2();
+void consensus_propose_test3();
 void consensus_shutdown();
 void consensus_start_leader_election();
 void consensus_stop_leader_election();

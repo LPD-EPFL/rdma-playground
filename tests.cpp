@@ -46,14 +46,10 @@ class Environment : public ::testing::Environment {
         g_ctx = create_ctx();
 
         EXPECT_NE(pid, 0);
-        EXPECT_NE(g_ctx.port, 0);
-        EXPECT_NE(g_ctx.ib_port, 0);
         EXPECT_EQ(g_ctx.len, (uint64_t)0);
-        EXPECT_NE(g_ctx.tx_depth, 0);
-        EXPECT_NE(sl, 0);
 
         printf("PID=%d | port=%d | ib_port=%d | size=%lu | tx_depth=%d | sl=%d |\n",
-            pid, g_ctx.port, g_ctx.ib_port, g_ctx.len, g_ctx.tx_depth, sl);
+            pid, IP_PORT, IB_PORT, g_ctx.len, MAX_SEND_WR, sl);
 
         // Is later needed to create random number for psn
         srand48(pid * time(NULL));
@@ -91,7 +87,7 @@ class Environment : public ::testing::Environment {
         }
 
         for (int i = 0; i < g_ctx.num_clients; ++i) {
-            qp_change_state_rts(&g_ctx.qps[i], g_ctx.ib_port);
+            qp_change_state_rts(&g_ctx.qps[i]);
         }
         printf("Main thred QPs changed to RTS mode\n");  
     }
@@ -363,19 +359,19 @@ TEST(RDMATest, BigTest) {
     //     log_increment_fuo(g_ctx.buf.log);
     //     log_write_local_slot_uint64(g_ctx.buf.log, g_ctx.buf.log->firstUndecidedOffset, 4, 5);
 
-    //     // start timer
-    //     struct timeval start, end;
-    //     gettimeofday(&start, NULL);
+        // start timer
+        // struct timeval start, end;
+        // gettimeofday(&start, NULL);
         
-    //     outer_loop(g_ctx.buf.log);
+        // outer_loop(g_ctx.buf.log);
         
-    //     // stop timer
-    //     gettimeofday(&end, NULL);
-    //     // output latency
-    //     uint64_t duration = (end.tv_sec * 1000000 + end.tv_usec) - (start.tv_sec * 1000000 + start.tv_usec );
-    //     double avg_latency = (1.0 * duration) / NB_ITERATIONS;
+        // // stop timer
+        // gettimeofday(&end, NULL);
+        // // output latency
+        // uint64_t duration = (end.tv_sec * 1000000 + end.tv_usec) - (start.tv_sec * 1000000 + start.tv_usec );
+        // double avg_latency = (1.0 * duration) / NB_ITERATIONS;
 
-    //     printf("Done with outer loop. Average latency = %.2f\n", avg_latency);
+        // printf("Done with outer loop. Average latency = %.2f\n", avg_latency);
 
     //     copy_remote_logs(0, SLOT, 7);
     //     for (int i = 0; i < g_ctx.num_clients; ++i) {

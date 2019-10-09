@@ -1,9 +1,6 @@
 #include "ibv_layer.h"
 
 extern struct global_context g_ctx;
-static int sl = 1;
-
-
 
 /*
  *  set_local_ib_connection
@@ -20,7 +17,7 @@ void set_local_ib_connection(struct global_context* ctx, bool is_le){
 
     // First get local lid
     struct ibv_port_attr attr;
-    TEST_NZ(ibv_query_port(ctx->context,ctx->ib_port,&attr),
+    TEST_NZ(ibv_query_port(ctx->context,IB_PORT,&attr),
         "Could not get port attributes, ibv_query_port");
 
     for (int i = 0; i < ctx->num_clients; ++i) {
@@ -99,14 +96,14 @@ qp_change_state_reset( struct qp_context *qpc )
  * **********************
  *    Changes Queue Pair status to INIT
  */
-int qp_change_state_init(struct qp_context *qpc, int ib_port){
+int qp_change_state_init(struct qp_context *qpc){
     
     struct ibv_qp_attr attr;
     memset(&attr, 0, sizeof(attr));
 
     attr.qp_state            = IBV_QPS_INIT;
-    attr.pkey_index          = 0;
-    attr.port_num            = ib_port;
+    attr.pkey_index          = PKEY_INDEX;
+    attr.port_num            = IB_PORT;
     attr.qp_access_flags     = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ;
 
     TEST_NZ(ibv_modify_qp(qpc->qp, &attr,
@@ -124,7 +121,7 @@ int qp_change_state_init(struct qp_context *qpc, int ib_port){
  * **********************
  *  Changes Queue Pair status to RTR (Ready to receive)
  */
-int qp_change_state_rtr(struct qp_context *qpc, int ib_port){
+int qp_change_state_rtr(struct qp_context *qpc){
     
     struct ibv_qp_attr attr;
     memset(&attr, 0, sizeof(attr));
@@ -133,13 +130,13 @@ int qp_change_state_rtr(struct qp_context *qpc, int ib_port){
     attr.path_mtu              = IBV_MTU_2048;
     attr.dest_qp_num           = qpc->remote_connection.qpn;
     attr.rq_psn                = qpc->remote_connection.psn;
-    attr.max_dest_rd_atomic    = 1;
-    attr.min_rnr_timer         = 12;
-    attr.ah_attr.is_global     = 0;
+    attr.max_dest_rd_atomic    = MAX_DEST_RD_ATOMIC;
+    attr.min_rnr_timer         = MIN_RNR_TIMER;
+    attr.ah_attr.is_global     = AH_ATTR_IS_GLOBAL;
     attr.ah_attr.dlid          = qpc->remote_connection.lid;
-    attr.ah_attr.sl            = sl;
-    attr.ah_attr.src_path_bits = 0;
-    attr.ah_attr.port_num      = ib_port;
+    attr.ah_attr.sl            = AH_ATTR_SL;
+    attr.ah_attr.src_path_bits = AH_ATTR_SRC_PATH_BITS;
+    attr.ah_attr.port_num      = IB_PORT;
 
     TEST_NZ(ibv_modify_qp(qpc->qp, &attr,
                 IBV_QP_STATE                |
@@ -161,19 +158,19 @@ int qp_change_state_rtr(struct qp_context *qpc, int ib_port){
  *  Changes Queue Pair status to RTS (Ready to send)
  *    QP status has to be RTR before changing it to RTS
  */
-int qp_change_state_rts(struct qp_context *qpc, int ib_port){
+int qp_change_state_rts(struct qp_context *qpc){
 
-    qp_change_state_rtr(qpc, ib_port); 
+    qp_change_state_rtr(qpc); 
     
     struct ibv_qp_attr attr;
     memset(&attr, 0, sizeof attr);
 
     attr.qp_state              = IBV_QPS_RTS;
-    attr.timeout               = 14;
-    attr.retry_cnt             = 7;
-    attr.rnr_retry             = 7;    /* infinite retry */
+    attr.timeout               = TIMEOUT;
+    attr.retry_cnt             = RETRY_CNT;
+    attr.rnr_retry             = RNR_RETRY;    /* infinite retry */
     attr.sq_psn                = qpc->local_connection.psn;
-    attr.max_rd_atomic         = 1;
+    attr.max_rd_atomic         = MAX_RD_ATOMIC;
 
     TEST_NZ(ibv_modify_qp(qpc->qp, &attr,
                 IBV_QP_STATE            |
@@ -194,16 +191,16 @@ int qp_change_state_rts(struct qp_context *qpc, int ib_port){
  * used only in case of ERROR
  */ 
 int 
-qp_restart( struct qp_context *qpc, int ib_port) {    
+qp_restart( struct qp_context *qpc) {    
 
 
     TEST_NZ(qp_change_state_reset(qpc),
         "Cannot move QP to reset state\n"); 
 
-    TEST_NZ(qp_change_state_init(qpc, ib_port),
+    TEST_NZ(qp_change_state_init(qpc),
         "Cannot move QP to init state\n");
 
-    TEST_NZ(qp_change_state_rts(qpc, ib_port),
+    TEST_NZ(qp_change_state_rts(qpc),
         "Cannot move QP to RTS state\n");
     
     return 0;
