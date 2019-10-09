@@ -10,7 +10,7 @@ extern "C" {
 void set_local_ib_connection(struct global_context* ctx, bool is_le);
 void print_ib_connection(const char *conn_name, struct ib_connection *conn);
 
-int tcp_exch_ib_connection_info(struct global_context* ctx);
+void exchange_ib_connection_info(struct global_context* ctx, const char *suffix);
 
 int qp_change_state_reset( struct qp_context *qpc );
 int qp_change_state_init(struct qp_context *qpc);
@@ -25,7 +25,7 @@ int permission_switch(struct ibv_mr* old_mr, struct ibv_mr* new_mr, struct ibv_p
 
 
 /**
- * Handle the completion status of a WC 
+ * Handle the completion status of a WC
  */
 static int
 handle_work_completion( struct ibv_wc *wc )
@@ -49,7 +49,7 @@ handle_work_completion( struct ibv_wc *wc )
         case IBV_WC_LOC_LEN_ERR:    //  Local Length Error
         case IBV_WC_LOC_QP_OP_ERR:  //  Local QP Operation Error
         case IBV_WC_LOC_EEC_OP_ERR: //  Local EE Context Operation Error
-        case IBV_WC_LOC_PROT_ERR:   //  Local Protection Error   
+        case IBV_WC_LOC_PROT_ERR:   //  Local Protection Error
         case IBV_WC_MW_BIND_ERR:    //  Memory Window Binding Error
         case IBV_WC_LOC_ACCESS_ERR: //  Local Access Error
         case IBV_WC_RNR_RETRY_EXC_ERR:  // RNR Retry Counter Exceeded
@@ -59,33 +59,33 @@ handle_work_completion( struct ibv_wc *wc )
         case IBV_WC_INV_EECN_ERR:   // Invalid EE Context Number
         case IBV_WC_INV_EEC_STATE_ERR:  // Invalid EE Context State Error
         case IBV_WC_WR_FLUSH_ERR:
-            /* Work Request Flushed Error: A Work Request was in 
-            process or outstanding when the QP transitioned into the 
+            /* Work Request Flushed Error: A Work Request was in
+            process or outstanding when the QP transitioned into the
             Error State. */
         case IBV_WC_BAD_RESP_ERR:
-            /* Bad Response Error - an unexpected transport layer 
+            /* Bad Response Error - an unexpected transport layer
             opcode was returned by the responder. */
         case IBV_WC_REM_INV_REQ_ERR:
-            /* Remote Invalid Request Error: The responder detected an 
-            invalid message on the channel. Possible causes include the 
-            operation is not supported by this receive queue, insufficient 
-            buffering to receive a new RDMA or Atomic Operation request, 
-            or the length specified in an RDMA request is greater than 
+            /* Remote Invalid Request Error: The responder detected an
+            invalid message on the channel. Possible causes include the
+            operation is not supported by this receive queue, insufficient
+            buffering to receive a new RDMA or Atomic Operation request,
+            or the length specified in an RDMA request is greater than
             2^{31} bytes. Relevant for RC QPs. */
         case IBV_WC_REM_OP_ERR:
-            /* Remote Operation Error: the operation could not be 
-            completed successfully by the responder. Possible causes 
-            include a responder QP related error that prevented the 
-            responder from completing the request or a malformed WQE on 
+            /* Remote Operation Error: the operation could not be
+            completed successfully by the responder. Possible causes
+            include a responder QP related error that prevented the
+            responder from completing the request or a malformed WQE on
             the Receive Queue. Relevant for RC QPs. */
         case IBV_WC_RETRY_EXC_ERR:
-            /* Transport Retry Counter Exceeded: The local transport 
-            timeout retry counter was exceeded while trying to send this 
-            message. This means that the remote side didn’t send any Ack 
-            or Nack. If this happens when sending the first message, 
-            usually this mean that the connection attributes are wrong or 
-            the remote side isn’t in a state that it can respond to messages. 
-            If this happens after sending the first message, usually it 
+            /* Transport Retry Counter Exceeded: The local transport
+            timeout retry counter was exceeded while trying to send this
+            message. This means that the remote side didn’t send any Ack
+            or Nack. If this happens when sending the first message,
+            usually this mean that the connection attributes are wrong or
+            the remote side isn’t in a state that it can respond to messages.
+            If this happens after sending the first message, usually it
             means that the remote QP isn’t available anymore. */
             /* REMOTE SIDE IS DOWN */
         case IBV_WC_FATAL_ERR:
@@ -110,13 +110,13 @@ handle_work_completion( struct ibv_wc *wc )
 // round_nb = the round number (SSN) that we expect to find inside the work completions (wr_id)
 // cq = the completion queue to poll from
 // num_entries = maximum number of entries to poll from cq
-// wc_array = a pre-allocated array to store the polled work completions 
+// wc_array = a pre-allocated array to store the polled work completions
 // Returns: 0 on success, 1 on non-fatal failure, -1 on fatal failure
-static int wait_for_n_inner(  int n, 
-                        uint64_t round_nb, 
-                        struct global_context* ctx, 
-                        int num_entries, 
-                        struct ibv_wc *wc_array, 
+static int wait_for_n_inner(  int n,
+                        uint64_t round_nb,
+                        struct global_context* ctx,
+                        int num_entries,
+                        struct ibv_wc *wc_array,
                         uint64_t* completed_ops ) {
     int success_count = 0;
     int completion_count = 0;
@@ -189,7 +189,7 @@ post_send_inner(  struct ibv_qp* qp,
     memset(&sg, 0, sizeof(sg));
     sg.addr   = (uint64_t)buf;
     sg.length = len;
-    sg.lkey   = lkey;    
+    sg.lkey   = lkey;
 
     memset(&wr, 0, sizeof(wr));
     wr.wr_id = wrid;
@@ -208,7 +208,7 @@ post_send_inner(  struct ibv_qp* qp,
     int rc = ibv_post_send(qp, &wr, &bad_wr);
 
     switch (rc) {
-        case EINVAL: 
+        case EINVAL:
             printf("EINVAL\n");
             break;
         case ENOMEM:

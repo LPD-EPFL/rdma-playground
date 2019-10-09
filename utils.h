@@ -30,7 +30,10 @@ extern "C" {
 #include <infiniband/verbs.h>
 
 #include "log.h"
+
 #include "constants.h"
+#include "registry.h"
+
 
 
 typedef enum {SLOT, MIN_PROPOSAL} write_location_t;
@@ -53,7 +56,7 @@ typedef enum {SLOT, MIN_PROPOSAL} write_location_t;
  * The WR Identifier (WRID)
  * the WRID is a 64-bit value [SSN|WA|TAG|CONN], where
     * SSN is the Send Sequence Number
-    * WA is the Wrap-Around flag, set for log update WRs 
+    * WA is the Wrap-Around flag, set for log update WRs
     * TAG is a flag set for special signaled WRs (to avoid QPs overflow)
     * CONN is a 8-bit index that identifies the connection (the remote server)
  */
@@ -99,13 +102,13 @@ struct qp_context {
     struct ibv_mr               *mr_read;
     // MR for writing from my local log to another node's log
     // Note: all mr_write MRs refer to the same physical location, but may have different permissions
-    struct ibv_mr               *mr_write; 
+    struct ibv_mr               *mr_write;
 
     struct ib_connection        local_connection;
     struct ib_connection        remote_connection;
-    char                        *servername; // Igor: should we store this per-connection?
-    char                        ip_address[NI_MAXHOST];
-    
+    // char                        *servername; // Igor: should we store this per-connection?
+    // char                        ip_address[NI_MAXHOST];
+
     union {
         log_t *log;
         counter_t *counter;
@@ -121,11 +124,10 @@ struct global_context {
     struct qp_context           *qps;
     uint64_t                    round_nb;
     int                         num_clients;
-    int                         *sockfd;
     char                        *servername;
-    char                        my_ip_address[NI_MAXHOST];
+    // char                        my_ip_address[NI_MAXHOST];
     int                         my_index; // my_index = i iff my_ip_address is the i-th in the config file
-    
+
     union {
         log_t *log;
         le_data_t *le_data;
@@ -134,6 +136,8 @@ struct global_context {
     int                         cur_write_permission; // index of process who currently has write permission on my memory
     size_t                      len; // length of buf in bytes (used when registering MRs)
     uint64_t                    *completed_ops;
+
+    struct dory_registry *registry;
 };
 
 static void
@@ -146,7 +150,6 @@ set_cpu(int cpu) {
         fprintf(stderr, "Error setting cpu affinity\n");
     }
 }
-
 
 struct global_context create_ctx(); 
 

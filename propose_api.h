@@ -12,4 +12,3 @@ void consensus_shutdown();
 void consensus_start_leader_election();
 void consensus_stop_leader_election();
 bool consensus_propose(uint8_t *buf, size_t len);
-

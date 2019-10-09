@@ -6,8 +6,8 @@ extern struct global_context g_ctx;
  *  set_local_ib_connection
  * *************************
  *  Sets all relevant attributes needed for an IB connection. Those are then sent to the peer via TCP
- *     Information needed to exchange data over IB are: 
- *      lid - Local Identifier, 16 bit address assigned to end node by subnet manager 
+ *     Information needed to exchange data over IB are:
+ *      lid - Local Identifier, 16 bit address assigned to end node by subnet manager
  *      qpn - Queue Pair Number, identifies qpn within channel adapter (HCA)
  *      psn - Packet Sequence Number, used to verify correct delivery sequence of packages (similar to ACK)
  *      rkey - Remote Key, together with 'vaddr' identifies and grants access to memory region
@@ -35,46 +35,63 @@ void set_local_ib_connection(struct global_context* ctx, bool is_le){
 }
 
 void print_ib_connection(const char *conn_name, struct ib_connection *conn){
-    
-    printf("%s: LID %#04x, QPN %#06x, PSN %#06x RKey %#08x VAddr %#016Lx\n", 
+
+    printf("%s: LID %#04x, QPN %#06x, PSN %#06x RKey %#08x VAddr %#016Lx\n",
             conn_name, conn->lid, conn->qpn, conn->psn, conn->rkey, conn->vaddr);
 
 }
 
-int tcp_exch_ib_connection_info(struct global_context* ctx){
+void exchange_ib_connection_info(struct global_context* ctx, const char *suffix){
+    char msg[ sizeof("0000:000000:000000:00000000:0000000000000000") ];
+    char key[256];
+    char name[256];
 
-    char msg[sizeof "0000:000000:000000:00000000:0000000000000000"];
-    int parsed;
+    for (int i = 0, j = 0; i < ctx->num_clients + 1; i++) {
+        // Add +1, to make it work with the continue statement
+        if (ctx->my_index == i) {
+            continue;
+        }
 
-    struct ib_connection *local;
-    
-    for (int i = 0; i < ctx->num_clients; ++i) {
-        local = &ctx->qps[i].local_connection; 
-        sprintf(msg, "%04x:%06x:%06x:%08x:%016Lx", 
+        struct ib_connection *local = &ctx->qps[j].local_connection;
+        sprintf(msg, "%04x:%06x:%06x:%08x:%016Lx",
                 local->lid, local->qpn, local->psn, local->rkey, local->vaddr);
-        if(write(ctx->sockfd[i], msg, sizeof msg) != sizeof msg){
-            perror("Could not send connection_details to peer");
-            return -1;
-        }    
 
-        if(read(ctx->sockfd[i], msg, sizeof msg) != sizeof msg){
-            perror("Could not receive connection_details to peer");
-            return -1;
-        }
-        struct ib_connection *remote = &ctx->qps[i].remote_connection;
-        parsed = sscanf(msg, "%x:%x:%x:%x:%Lx", 
-                            &remote->lid, &remote->qpn, &remote->psn, &remote->rkey, &remote->vaddr);
-        
-        if(parsed != 5){
-            fprintf(stderr, "Could not parse message from peer");
-        }
+
+        sprintf(key, "dory-%s-rc-qp-%d-%d", suffix, ctx->my_index, i);
+        dory_registry_publish(ctx->registry, key, msg, sizeof(msg));
+
+        j++;
     }
 
-    return 0;
+    sprintf(name, "dory-%s-idx-%d", suffix, ctx->my_index);
+    dory_registry_publish_ready(ctx->registry, name);
+
+    for (int i = 0, j = 0; i < ctx->num_clients + 1; i++) {
+        // Add +1, to make it work with the continue statement
+        if (ctx->my_index == i) {
+            continue;
+        }
+
+        sprintf(name, "dory-%s-idx-%d", suffix, i);
+        dory_registry_wait_till_ready(ctx->registry, name);
+
+        sprintf(key, "dory-%s-rc-qp-%d-%d", suffix, i, ctx->my_index);
+        char *msg = NULL;
+        int ret = dory_registry_get_published(ctx->registry, key, (void **) &msg);
+        CPE(ret == -1, -1, "Could not get published key from registry");
+
+        struct ib_connection *remote = &ctx->qps[j].remote_connection;
+        int cnt = sscanf(msg, "%x:%x:%x:%x:%Lx",
+                            &remote->lid, &remote->qpn, &remote->psn, &remote->rkey, &remote->vaddr);
+        CPE(cnt != 5, -1, "Could not parse message from peer");
+        free(msg);
+
+        j++;
+    }
 }
 
 /**
- * Move a QP to the RESET state 
+ * Move a QP to the RESET state
  */
 int
 qp_change_state_reset( struct qp_context *qpc )
@@ -82,11 +99,11 @@ qp_change_state_reset( struct qp_context *qpc )
     struct ibv_qp_attr attr;
 
     memset(&attr, 0, sizeof(attr));
-    attr.qp_state = IBV_QPS_RESET; 
+    attr.qp_state = IBV_QPS_RESET;
 
     TEST_NZ(ibv_modify_qp(qpc->qp, &attr, IBV_QP_STATE),
                 "Could not modify QP to RESET, ibv_modify_qp");
-    
+
     return 0;
 }
 
@@ -147,7 +164,7 @@ int qp_change_state_rtr(struct qp_context *qpc){
                 IBV_QP_MAX_DEST_RD_ATOMIC   |
                 IBV_QP_MIN_RNR_TIMER),
         "Could not modify QP to RTR state");
-    
+
     return 0;
 }
 
@@ -180,13 +197,13 @@ int qp_change_state_rts(struct qp_context *qpc){
                 IBV_QP_SQ_PSN           |
                 IBV_QP_MAX_QP_RD_ATOMIC),
         "Could not modify QP to RTS state");
-    
+
 
     return 0;
 }
 
 
-/** 
+/**
  * Restarts a certain QP: *->RESET->INIT->RTR->RTS
  * used only in case of ERROR
  */ 
@@ -195,25 +212,25 @@ qp_restart( struct qp_context *qpc) {
 
 
     TEST_NZ(qp_change_state_reset(qpc),
-        "Cannot move QP to reset state\n"); 
+        "Cannot move QP to reset state\n");
 
     TEST_NZ(qp_change_state_init(qpc),
         "Cannot move QP to init state\n");
 
     TEST_NZ(qp_change_state_rts(qpc),
         "Cannot move QP to RTS state\n");
-    
+
     return 0;
 }
 
-void 
+void
 rc_qp_destroy( struct ibv_qp *qp, struct ibv_cq *cq ) {
     struct ibv_qp_attr attr;
     struct ibv_qp_init_attr init_attr;
     struct ibv_wc wc;
 
     if (NULL == qp) return;
-       
+
     ibv_query_qp(qp, &attr, IBV_QP_STATE, &init_attr);
     if (attr.qp_state != IBV_QPS_RESET) {
         /* Move QP into the ERR state to cancel all outstanding WR */
@@ -224,9 +241,9 @@ rc_qp_destroy( struct ibv_qp *qp, struct ibv_cq *cq ) {
         /* Empty the corresponding CQ */
         while (ibv_poll_cq(cq, 1, &wc) > 0);// info(log_fp, "while...\n");
     }
-   
+
     TEST_NZ(ibv_destroy_qp(qp), "could not destroy qp");
-    
+
 }
 
 /*
@@ -238,7 +255,7 @@ void rdma_write(int id){
 
     post_send_inner(g_ctx.qps[id].qp, g_ctx.buf.log, log_size(g_ctx.buf.log), g_ctx.qps[id].mr_write->lkey, g_ctx.qps[id].remote_connection.rkey, g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
 
-}    
+}
 
 
 /*
@@ -257,7 +274,7 @@ int permission_switch(struct ibv_mr* old_mr, struct ibv_mr* new_mr, struct ibv_p
     TEST_NZ(ibv_rereg_mr(old_mr, // the memory region
         IBV_REREG_MR_CHANGE_ACCESS, // we want to change the access flags
         pd, // the protection domain
-        addr, length, 
+        addr, length,
         old_new_flags),
         "ibv_rereg_mr: failed to take away permission");
 
@@ -265,7 +282,7 @@ int permission_switch(struct ibv_mr* old_mr, struct ibv_mr* new_mr, struct ibv_p
     TEST_NZ(ibv_rereg_mr(new_mr, // the memory region
         IBV_REREG_MR_CHANGE_ACCESS, // we want to change the access flags
         pd, // the protection domain
-        addr, length, 
+        addr, length,
         new_new_flags),
         "ibv_rereg_mr: failed to give permission");
 

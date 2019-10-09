@@ -1,3 +1,6 @@
+#include <stdio.h>
+#include <stdlib.h>
+
 #include "propose_api.h"
 
 int main() {
@@ -6,6 +9,5 @@ int main() {
         getchar();
         consensus_shutdown();
 
-        return 0;
+    return 0;
 }
-

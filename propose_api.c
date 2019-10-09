@@ -3,6 +3,8 @@
 #include "leader-election.h"
 #include <assert.h>
 #include <sys/time.h>
+#include "parser.h"
+#include "registry.h"
 
 static int page_size;
 static int sl = 1;
@@ -15,12 +17,6 @@ int leader = 0;
 extern struct global_context g_ctx;
 extern struct global_context le_ctx;
 // extern volatile bool stop_le;
-
-bool isValidIpAddress(char *ipAddress) {
-    struct sockaddr_in sa;
-    int result = inet_pton(AF_INET, ipAddress, &(sa.sin_addr));
-    return result != 0;
-}
 
 void consensus_setup() {
 
@@ -42,28 +38,30 @@ void consensus_setup() {
 
         page_size = sysconf(_SC_PAGESIZE);
 
-        count_lines(config_file, &g_ctx);
-        assert(g_ctx.num_clients > 0);
+        // Parse the configuration
+        const char * filename = toml_getenv("CONFIG");
+        toml_table_t *conf = toml_load_conf(filename);
+
+        // Prepare memcached server
+        char* host;
+        int64_t port;
+        toml_parse_registry(conf, &host, &port);
+        g_ctx.registry = dory_registry_create(host, port);
+
+        // Prepare global context
+        int64_t clients, id;
+        toml_parse_general(conf, &clients, &id);
+        g_ctx.num_clients = clients - 1;
+        g_ctx.my_index = id;
+
+        // End of parsing. Pointer data are now owned by the registry and
+        // the global context.
+        toml_free(conf);
 
         init_ctx_common(&g_ctx, false); // false = consensus thread
 
-        parse_config(config_file, &g_ctx);
-
-        assert(isValidIpAddress(g_ctx.qps[0].ip_address));
-        assert(isValidIpAddress(g_ctx.qps[1].ip_address));
-        // printf("Current ip addresses before set local ib connection %s %s\n", g_ctx.qps[0].ip_address, g_ctx.qps[1].ip_address);
-
         set_local_ib_connection(&g_ctx, false); // false = consensus thread
-
-        g_ctx.sockfd = (int*)malloc(g_ctx.num_clients * sizeof(g_ctx.sockfd));
-
-        tcp_server_listen();
-
-        // TODO maybe sleep here
-        tcp_client_connect();
-
-        assert(tcp_exch_ib_connection_info(&g_ctx) == 0 && 
-                "Could not exchange connection, tcp_exch_ib_connection");
+        exchange_ib_connection_info(&g_ctx, "consensus");
 
         // Print IB-connection details
         printf("Consensus thread connections:\n");
@@ -75,7 +73,7 @@ void consensus_setup() {
         for (int i = 0; i < g_ctx.num_clients; ++i) {
             qp_change_state_rts(&g_ctx.qps[i]);
         }
-        printf("Main thred QPs changed to RTS mode\n");
+        printf("Main thread QPs changed to RTS mode\n");
 }
 
 void consensus_start_leader_election() {
