@@ -13,13 +13,14 @@ extern "C" {
 #define CACHE_LINE_SIZE 64
 
 struct value_t {
-    uint64_t len;
+    uint32_t len;
     uint8_t val[0];
 };
 typedef struct value_t value_t;
 
 struct log_slot {
     uint64_t accProposal;
+    uint32_t firstUndecidedOffset;
     value_t accValue;
 };
 typedef struct log_slot log_slot_t;
@@ -168,11 +169,11 @@ static void log_increment_fuo(log_t *log) {
     log->firstUndecidedOffset = offset;
 }
 
-static void log_write_local_slot(log_t *log, uint64_t offset, uint64_t propNr,
-                                 value_t *v) {
+static void log_write_local_slot(log_t *log, uint64_t offset, uint64_t propNr, value_t *v) {
     log_slot_t *slot = log_get_local_slot(log, offset);
 
     slot->accProposal = propNr;
+    slot->firstUndecidedOffset = log->firstUndecidedOffset;
     slot->accValue.len = v->len;
     memcpy(slot->accValue.val, v->val, v->len);
 }
@@ -182,6 +183,8 @@ static void log_write_local_slot_uint64(log_t *log, uint64_t offset,
     log_slot_t *slot = log_get_local_slot(log, offset);
 
     slot->accProposal = propNr;
+    slot->firstUndecidedOffset = log->firstUndecidedOffset;
+
     slot->accValue.len = sizeof(uint64_t);
     *(uint64_t *)slot->accValue.val = val;
 }
@@ -217,7 +220,7 @@ static void printchar(unsigned char theChar) {
 }
 
 static void log_print_slot_generic(log_slot_t *slot) {
-    printf("[%lu, ", slot->accProposal);
+    printf("[%lu, %u, ", slot->accProposal, slot->firstUndecidedOffset);
     for (uint64_t i = 0; i < slot->accValue.len; i++) {
         printchar(((unsigned char *)slot->accValue.val)[i]);
     }
@@ -231,7 +234,7 @@ static void log_print(log_t *log) {
     log_slot_t *slot = log_get_local_slot(log, offset);
     while (slot->accValue.len != 0) {
         if (slot->accValue.len == 8) {
-            printf("[%lu, %lu] ", slot->accProposal,
+            printf("[%lu, %u, %lu] ", slot->accProposal, slot->firstUndecidedOffset,
                    *(uint64_t *)slot->accValue.val);
         } else {
             log_print_slot_generic(slot);
