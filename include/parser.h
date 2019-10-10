@@ -1,7 +1,7 @@
 #pragma once
 
 #include <stdint.h>
-#include "toml/toml.h"
+#include "toml.h"
 
 toml_table_t *toml_load_conf(char const *filename);
 void toml_parse_registry(toml_table_t *conf, char **host, int64_t *port);
