@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
 #include <unistd.h>
 
 #include "registry.h"
@@ -124,7 +125,7 @@ void dory_registry_wait_till_ready(const struct dory_registry *registry, const c
             }
         }
 
-        usleep(200000);
+        sleep(1);
 
         if (tries > 100) {
             fprintf(stderr, "Waiting for QPs %s to be ready\n", qp_name);

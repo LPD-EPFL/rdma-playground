@@ -3,6 +3,9 @@
 #include "leader-election.h"
 #include "barrier.h"
 
+#include "parser.h"
+#include "registry.h"
+
 #include "gtest/gtest.h"
 #include <string>
 
@@ -11,8 +14,6 @@
 static int page_size;
 static int sl = 1;
 static pid_t pid;
-
-const char* config_file = "./config";
 
 int leader = 0;
 
@@ -53,43 +54,45 @@ class Environment : public ::testing::Environment {
 
         // Is later needed to create random number for psn
         srand48(pid * time(NULL));
-        
+
         page_size = sysconf(_SC_PAGESIZE);
 
-        count_lines(config_file, &g_ctx);
-        EXPECT_GT(g_ctx.num_clients, 0);
-        
+        // Parse the configuration
+        const char * filename = toml_getenv("CONFIG");
+        toml_table_t *conf = toml_load_conf(filename);
+
+        // Prepare memcached server
+        char* host;
+        int64_t port;
+        toml_parse_registry(conf, &host, &port);
+        g_ctx.registry = dory_registry_create(host, port);
+
+        // Prepare global context
+        int64_t clients, id;
+        toml_parse_general(conf, &clients, &id);
+        g_ctx.num_clients = clients - 1;
+        g_ctx.my_index = id;
+
+        // End of parsing. Pointer data are now owned by the registry and
+        // the global context.
+        toml_free(conf);
+
         init_ctx_common(&g_ctx, false); // false = consensus thread
 
-        parse_config(config_file, &g_ctx);
-
-        EXPECT_TRUE(isValidIpAddress(g_ctx.qps[0].ip_address));
-        EXPECT_TRUE(isValidIpAddress(g_ctx.qps[1].ip_address));
-        // printf("Current ip addresses before set local ib connection %s %s\n", g_ctx.qps[0].ip_address, g_ctx.qps[1].ip_address);
-
         set_local_ib_connection(&g_ctx, false); // false = consensus thread
-        
-        g_ctx.sockfd = (int*)malloc(g_ctx.num_clients * sizeof(g_ctx.sockfd));
-
-        tcp_server_listen();
-
-        // TODO maybe sleep here
-        tcp_client_connect();
-
-        ASSERT_EQ(tcp_exch_ib_connection_info(&g_ctx), 0) << error_details(
-                "Could not exchange connection, tcp_exch_ib_connection");
+        exchange_ib_connection_info(&g_ctx, "consensus");
 
         // Print IB-connection details
         printf("Consensus thread connections:\n");
         for (int i = 0; i < g_ctx.num_clients; ++i) {
             print_ib_connection("Local  Connection", &g_ctx.qps[i].local_connection);
-            print_ib_connection("Remote Connection", &g_ctx.qps[i].remote_connection);    
+            print_ib_connection("Remote Connection", &g_ctx.qps[i].remote_connection);
         }
 
         for (int i = 0; i < g_ctx.num_clients; ++i) {
             qp_change_state_rts(&g_ctx.qps[i]);
         }
-        printf("Main thred QPs changed to RTS mode\n");  
+        printf("Main thred QPs changed to RTS mode\n");
     }
 
     // Override this to define how to tear down the environment.
@@ -129,7 +132,7 @@ TEST(RDMATest, LeaderElectionAskPermission) {
             ne = ibv_poll_cq(g_ctx.cq, 1, &wc);
 
             if (ne > 0) {
-                printf("Work completion with id %llu has status %s (%d) \n", wc.wr_id, ibv_wc_status_str(wc.status), wc.status);
+                printf("Work completion with id %lu has status %s (%d) \n", wc.wr_id, ibv_wc_status_str(wc.status), wc.status);
                 sleep(1);
             } else {
                 printf("ne was %d\n", ne);
@@ -151,7 +154,7 @@ TEST(RDMATest, LeaderElectionAskPermission) {
             ne = ibv_poll_cq(g_ctx.cq, 1, &wc);
 
             if (ne > 0) {
-                printf("Work completion with id %llu has status %s (%d) \n", wc.wr_id, ibv_wc_status_str(wc.status), wc.status);
+                printf("Work completion with id %lu has status %s (%d) \n", wc.wr_id, ibv_wc_status_str(wc.status), wc.status);
                 sleep(1);
             } else {
                 printf("ne was %d\n", ne);
@@ -196,7 +199,7 @@ TEST(RDMATest, LeaderElectionAskPermission2) {
             ne = ibv_poll_cq(g_ctx.cq, 1, &wc);
 
             if (ne > 0) {
-                printf("Work completion with id %llu has status %s (%d) \n", wc.wr_id, ibv_wc_status_str(wc.status), wc.status);
+                printf("Work completion with id %lu has status %s (%d) \n", wc.wr_id, ibv_wc_status_str(wc.status), wc.status);
                 sleep(1);
             } else {
                 printf("ne was %d\n", ne);
@@ -218,7 +221,7 @@ TEST(RDMATest, LeaderElectionAskPermission2) {
             ne = ibv_poll_cq(g_ctx.cq, 1, &wc);
 
             if (ne > 0) {
-                printf("Work completion with id %llu has status %s (%d) \n", wc.wr_id, ibv_wc_status_str(wc.status), wc.status);
+                printf("Work completion with id %lu has status %s (%d) \n", wc.wr_id, ibv_wc_status_str(wc.status), wc.status);
                 sleep(1);
             } else {
                 printf("ne was %d\n", ne);
@@ -244,7 +247,7 @@ TEST(RDMATest, Propose) {
         propose((uint8_t*)&val, sizeof(val));
         val = 44;
         propose((uint8_t*)&val, sizeof(val));
-        sleep(1);        
+        sleep(1);
     } else {
         sleep(1);
         log_print(g_ctx.buf.log);
@@ -259,9 +262,9 @@ TEST(RDMATest, UnexpectedError) {
 
     if (g_ctx.my_index == 2) {
         // revoke 0's permission to read
-        TEST_NZ(ibv_rereg_mr(   g_ctx.qps[0].mr_write, 
-                        IBV_REREG_MR_CHANGE_ACCESS, 
-                        g_ctx.pd, 
+        TEST_NZ(ibv_rereg_mr(   g_ctx.qps[0].mr_write,
+                        IBV_REREG_MR_CHANGE_ACCESS,
+                        g_ctx.pd,
                         g_ctx.buf.log,
                         g_ctx.len,
                         (IBV_ACCESS_LOCAL_WRITE)),
@@ -289,18 +292,18 @@ TEST(RDMATest, UnexpectedError) {
     }
 }
 
-TEST(RDMATest, BigTest) {    
-    // spawn_leader_election_thread(); 
-        
+TEST(RDMATest, BigTest) {
+    // spawn_leader_election_thread();
+
     printf("Going to sleep before consensus\n");
-    
+
     if (g_ctx.my_index == 2) {
         // remove permission for 0
         // take away access from old mr
         TEST_NZ(ibv_rereg_mr(g_ctx.qps[0].mr_write, // the memory region
             IBV_REREG_MR_CHANGE_ACCESS, // we want to change the access flags
             g_ctx.pd, // the protection domain
-            (void*)g_ctx.buf.log, g_ctx.len, 
+            (void*)g_ctx.buf.log, g_ctx.len,
             IBV_ACCESS_LOCAL_WRITE),
             "ibv_rereg_mr: failed to take away permission");
 
@@ -335,7 +338,7 @@ TEST(RDMATest, BigTest) {
             ne = ibv_poll_cq(g_ctx.cq, 1, &wc);
 
             if (ne > 0) {
-                printf("Work completion with id %llu has status %s (%d) \n", wc.wr_id, ibv_wc_status_str(wc.status), wc.status);
+                printf("Work completion with id %lu has status %s (%d) \n", wc.wr_id, ibv_wc_status_str(wc.status), wc.status);
                 sleep(1);
                 if (wc.status == IBV_WC_REM_ACCESS_ERR) {
                     printf("Restarting the QP\n");
@@ -362,9 +365,9 @@ TEST(RDMATest, BigTest) {
         // start timer
         // struct timeval start, end;
         // gettimeofday(&start, NULL);
-        
+
         // outer_loop(g_ctx.buf.log);
-        
+
         // // stop timer
         // gettimeofday(&end, NULL);
         // // output latency
@@ -380,7 +383,7 @@ TEST(RDMATest, BigTest) {
 
     //     // printf("Press ENTER to continue\n");
     //     // getchar();
-        
+
     //     // For now, the message to be written into the clients buffer can be edited here
     //     //char *chPtr = &(g_ctx.buf.log->slots[0]);
     //     //strcpy(chPtr,"Saluton Teewurst. UiUi");
@@ -401,25 +404,25 @@ TEST(RDMATest, BigTest) {
     //     // struct ibv_wc wc;
     //     // //int n, uint64_t round_nb, struct ibv_cq *cq, int num_entries, struct ibv_wc *wc_array);
     //     // wait_for_n(g_ctx.num_clients, 42, g_ctx.cq, 1, &wc);
-        
+
     //     // printf("Server. Done with write. Reading from client\n");
 
     //     // sleep(1);
     //     // rdma_read(ctx, &data, 0);
     //     // printf("Printing local buffer: %s\n" ,chPtr);
-        
+
     // } else { // Client
 
     //     // permission_switch(g_ctx.mr[1], g_ctx.mr[0], g_ctx.pd, g_ctx.buf, g_ctx.size*2, IBV_ACCESS_LOCAL_WRITE, IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE);
     //     // permission_switch(g_ctx.mr[0], g_ctx.mr[1], g_ctx.pd, g_ctx.buf, g_ctx.size*2, IBV_ACCESS_LOCAL_WRITE, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
     //     // ibv_rereg_mr(g_ctx.mr[0], IBV_REREG_MR_CHANGE_ACCESS, g_ctx.pd, g_ctx.buf, g_ctx.size * 2, IBV_ACCESS_LOCAL_WRITE);
     //     // ibv_rereg_mr(g_ctx.mr[1], IBV_REREG_MR_CHANGE_ACCESS, g_ctx.pd, g_ctx.buf, g_ctx.size * 2, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
-       
+
     //     sleep(3);
     //     printf("Client. Reading Local-Buffer (Buffer that was registered with MR)\n");
-        
+
     //     // char *chPtr = (char *)g_ctx.qps[0].local_connection.vaddr;
-            
+
     //     // while(1){
     //     //     if(strlen(chPtr) > 0){
     //     //         break;
@@ -429,13 +432,13 @@ TEST(RDMATest, BigTest) {
 
 
     //     log_print(g_ctx.buf.log);
-        
+
     // }
 
     printf("Going to sleep after consensus\n");
     sleep(15);
-    
-    
+
+
 }
 
 }  // namespace

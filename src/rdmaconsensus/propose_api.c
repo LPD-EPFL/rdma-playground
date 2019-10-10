@@ -10,8 +10,6 @@ static int page_size;
 static int sl = 1;
 static pid_t pid;
 
-const char* config_file = CONFIG_FILE_NAME;
-
 int leader = 0;
 
 extern struct global_context g_ctx;
@@ -106,7 +104,7 @@ void consensus_propose_test1() {
         sleep(1);
         log_print(g_ctx.buf.log);
     }
-    
+
 
     stop_leader_election();
     shutdown_leader_election_thread();
@@ -115,16 +113,16 @@ void consensus_propose_test1() {
 void consensus_propose_test2() {
     uint64_t val;
 
-    start_leader_election();       
+    start_leader_election();
 
     if (g_ctx.my_index == 0) {
-        propose((uint8_t*)&val, sizeof(val)); 
-        
+        propose((uint8_t*)&val, sizeof(val));
+
         struct timeval start, end;
         gettimeofday(&start, NULL);
         val = 42;
         for (int i = 0; i < TEST_SIZE; ++i) {
-            propose((uint8_t*)&val, sizeof(val));        
+            propose((uint8_t*)&val, sizeof(val));
         }
         gettimeofday(&end, NULL);
         uint64_t duration = (end.tv_sec * 1000000 + end.tv_usec) - (start.tv_sec * 1000000 + start.tv_usec );
@@ -140,7 +138,6 @@ void consensus_propose_test2() {
 }
 
 void consensus_propose_test3() {
-    uint64_t val;
     struct ibv_wc wc_array[g_ctx.num_clients];
     struct timeval start, end;
 
@@ -173,4 +170,3 @@ void consensus_propose_test3() {
     // stop_leader_election();
     // shutdown_leader_election_thread();
 }
-

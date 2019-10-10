@@ -32,7 +32,7 @@ propose(uint8_t* buf, size_t len) {
             rc = update_followers();
             if (rc) continue;
 
-            need_init = false;            
+            need_init = false;
         }
 
         done = propose_inner(buf, len);
@@ -46,7 +46,7 @@ propose_inner(uint8_t* buf, size_t len) {
     int rc;
     bool inner_done = false;
     uint64_t offset = 0;
-    
+
     value_t* freshVal = NULL;
 
     while (!inner_done) {
@@ -59,13 +59,13 @@ propose_inner(uint8_t* buf, size_t len) {
             if (!min_proposal_ok()) { // check if any of the read minProposals are larger than our g_prop_nr
                 g_prop_nr += g_ctx.num_clients + 1; // increment proposal number
                 continue;
-            } 
+            }
 
             write_min_proposal(g_ctx.buf.log);
             // issue the next instruction without waiting for completions
 
-            // read slot at position "offset" from a majority of logs 
-            copy_remote_logs(offset, SLOT, DEFAULT_VALUE_SIZE); 
+            // read slot at position "offset" from a majority of logs
+            copy_remote_logs(offset, SLOT, DEFAULT_VALUE_SIZE);
 
             // value with highest accepted proposal among those read
             freshVal = freshest_accepted_value(offset);
@@ -98,7 +98,7 @@ propose_inner(uint8_t* buf, size_t len) {
             // printf("Inner propose is not done\n");
         // }
         // increment the firstUndecidedOffset
-        log_increment_fuo(g_ctx.buf.log);    
+        log_increment_fuo(g_ctx.buf.log);
     }
 
     return true;
@@ -134,7 +134,7 @@ update_followers() {
         local_address = &g_ctx.buf.log->firstUndecidedOffset;
         req_size = sizeof(g_ctx.buf.log->firstUndecidedOffset);
         remote_addr = log_get_remote_address(g_ctx.buf.log, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
-        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, wrid, true);   
+        post_send(g_ctx.qps[i].qp, local_address, req_size, g_ctx.qps[i].mr_write->lkey, g_ctx.qps[i].remote_connection.rkey, remote_addr, IBV_WR_RDMA_WRITE, wrid, true);
 
     }
 
@@ -144,7 +144,7 @@ update_followers() {
         struct ibv_wc wc_array[g_ctx.num_clients];
         // currently we are polling at most num_clients WCs from the CQ at a time
         // we might want to change this number later
-        rc = wait_for_n(nb_to_wait, g_ctx.round_nb, &g_ctx, g_ctx.num_clients, wc_array, g_ctx.completed_ops);     
+        rc = wait_for_n(nb_to_wait, g_ctx.round_nb, &g_ctx, g_ctx.num_clients, wc_array, g_ctx.completed_ops);
     }
 
     return rc;
@@ -164,6 +164,7 @@ min_proposal_ok() {
 
 int
 write_log_slot(log_t* log, uint64_t offset, value_t* value) {
+    UNUSED(value);
 
     // printf("Value length %lu - last byte %u\n", value->len, value->val[value->len-1]);
     // if (value->len <= 8) {
@@ -171,7 +172,7 @@ write_log_slot(log_t* log, uint64_t offset, value_t* value) {
     //     log_write_local_slot_uint64(log, offset, g_prop_nr, *(uint64_t*)value->val);
     // } else {
     //     printf("Write log slot string %lu, %s\n", offset, value->val);
-    //     log_write_local_slot_string(log, offset, g_prop_nr, (char*)value->val);        
+    //     log_write_local_slot_string(log, offset, g_prop_nr, (char*)value->val);
     // }
 
     log_write_local_slot_uint64(log, offset, g_prop_nr, 42);
@@ -183,12 +184,12 @@ write_log_slot(log_t* log, uint64_t offset, value_t* value) {
         signaled = true;
     // }
     rdma_write_to_all(log, offset, SLOT, signaled);
-    
+
     if (signaled) {
         return wait_for_majority();
-    } 
+    }
 
-    return 0; 
+    return 0;
 }
 
 void
@@ -207,10 +208,10 @@ read_min_proposals() {
 void
 copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size) {
 
-    void* local_address;
-    uint64_t remote_addr;
-    size_t req_size;
-    log_slot_t *slot;
+    void* local_address = NULL;
+    uint64_t remote_addr = 0;
+    size_t req_size = 0;
+    log_slot_t *slot = NULL;
     uint64_t wrid = 0;
 
     g_ctx.round_nb++;
@@ -230,7 +231,7 @@ copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size) {
                 local_address = &g_ctx.qps[i].buf_copy.log->minProposal;
                 req_size = sizeof(g_ctx.qps[i].buf_copy.log->minProposal);
                 break;
-        }   
+        }
 
         WRID_SET_CONN(wrid, i);
         remote_addr = log_get_remote_address(g_ctx.qps[i].buf_copy.log, local_address, (log_t*)g_ctx.qps[i].remote_connection.vaddr);
@@ -280,9 +281,9 @@ copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size) {
 void
 rdma_write_to_all(log_t* log, uint64_t offset, write_location_t type, bool signaled) {
 
-    void* local_address;
-    uint64_t remote_addr;
-    size_t req_size;
+    void* local_address = NULL;
+    uint64_t remote_addr = 0;
+    size_t req_size = 0;
     uint64_t wrid = 0;
 
 
@@ -309,12 +310,12 @@ rdma_write_to_all(log_t* log, uint64_t offset, write_location_t type, bool signa
 
 // Igor - potential problem: we only look at fresh items, but copy_remote_logs might have cleared and overwritten the completed_ops
 // array several times, so we cannot know which are the fresh items
-// Can solve this in wait_for_n: don't clear completed_ops, rather update it with the most recent round_nb for which we have reveiced a 
+// Can solve this in wait_for_n: don't clear completed_ops, rather update it with the most recent round_nb for which we have reveiced a
 value_t*
 freshest_accepted_value(uint64_t offset) {
     uint64_t max_acc_prop;
     value_t* freshest_value;
-    
+
     // start with my accepted proposal and value for the given offset
     log_slot_t* my_slot = log_get_local_slot(g_ctx.buf.log, offset);
     max_acc_prop = my_slot->accProposal;
@@ -328,7 +329,7 @@ freshest_accepted_value(uint64_t offset) {
             if (remote_slot->accProposal > max_acc_prop) {
                 max_acc_prop = remote_slot->accProposal;
                 freshest_value = &remote_slot->accValue;
-            }            
+            }
         }
     }
 
@@ -354,6 +355,5 @@ wait_for_all() {
     struct ibv_wc wc_array[g_ctx.num_clients];
     // currently we are polling at most num_clients WCs from the CQ at a time
     // we might want to change this number later
-    return wait_for_n(g_ctx.num_clients, g_ctx.round_nb, &g_ctx, g_ctx.num_clients, wc_array, g_ctx.completed_ops); 
+    return wait_for_n(g_ctx.num_clients, g_ctx.round_nb, &g_ctx, g_ctx.num_clients, wc_array, g_ctx.completed_ops);
 }
-

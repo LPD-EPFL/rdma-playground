@@ -1,5 +1,6 @@
 #include "leader-election.h"
 #include "barrier.h"
+#include "utils.h"
 
 struct global_context le_ctx;
 volatile bool stop_le;
@@ -28,6 +29,7 @@ spawn_leader_election_thread() {
 }
 
 void * check_permission_loop(void * arg) {
+    UNUSED(arg);
 
     set_cpu(PERM_THREAD_CPU);
 
@@ -60,6 +62,8 @@ void start_permission_checking() {
 
 void*
 leader_election(void* arg) {
+    UNUSED(arg);
+
     set_cpu(LE_THREAD_CPU);
 
     le_ctx = create_ctx();
@@ -203,10 +207,10 @@ wait_for_perm_ack(int n) {
     uint64_t len = le_ctx.buf.le_data->len;
 
     while (acks < n) {
-        for (int i = 0; i < len; ++i) {
+        for (uint64_t i = 0; i < len; ++i) {
             if (le_ctx.buf.le_data->perm_reqs_acks[i].ack == 1) {
                 le_ctx.buf.le_data->perm_reqs_acks[i].ack = 0;
-                printf("Got ack from %d\n", i);
+                printf("Got ack from %lu\n", i);
                 acks += 1;
             }
         }

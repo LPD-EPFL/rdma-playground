@@ -3,6 +3,10 @@ project('Dory RDMA consensus', 'c', 'cpp',
     version : '1.0.0',
     license : 'MIT')
 
+add_global_arguments(['-Wno-unused-function',
+                      '-Wno-pedantic'],
+                     language: ['c', 'cpp'])
+
 # add_global_arguments('-DGNU_SOURCE', language : 'c')
 
 inc = [include_directories('include')]
@@ -17,10 +21,24 @@ subdir('third_party')
 subdir('src')
 # subdir('test')
 
-sample_cpp_project_bin = executable('propose-test',
+
+executable('propose-test',
     propose_test_sources,
     include_directories : inc,
     link_with : rdmaconsensus_lib
+)
+
+# executable('tests-c',
+#     tests_c_sources,
+#     include_directories : inc,
+#     link_with : rdmaconsensus_lib
+# )
+
+executable('tests-cpp',
+    tests_cpp_sources,
+    include_directories : inc,
+    dependencies : tests_cpp_deps,
+    link_with : [toml_lib]
 )
 
 # pkg_mod = import('pkgconfig')

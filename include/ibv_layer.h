@@ -30,7 +30,7 @@ int permission_switch(struct ibv_mr* old_mr, struct ibv_mr* new_mr, struct ibv_p
 static int
 handle_work_completion( struct ibv_wc *wc )
 {
-    int rc;
+    int rc = 0;
     // uint64_t wr_id = wc->wr_id;
     // uint8_t wr_idx = WRID_GET_CONN(wr_id);
     // dare_ib_ep_t *ep = (dare_ib_ep_t*)SRV_DATA->config.servers[wr_idx].ep;
@@ -122,7 +122,7 @@ static int wait_for_n_inner(  int n,
     int completion_count = 0;
     int ne = 0;
     int i;
-    int ret;
+    int ret = 0;
     uint64_t wr_id;
     int cid;
 

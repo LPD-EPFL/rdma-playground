@@ -38,7 +38,7 @@ extern "C" {
 
 typedef enum {SLOT, MIN_PROPOSAL} write_location_t;
 
-
+#define UNUSED(x) (void)(x)
 
 // if x is NON-ZERO, error is printed
 #define TEST_NZ(x,y) do { if ((x)) die(y); } while (0)
@@ -151,7 +151,7 @@ set_cpu(int cpu) {
     }
 }
 
-struct global_context create_ctx(); 
+struct global_context create_ctx();
 
 #ifdef __cplusplus
 }
