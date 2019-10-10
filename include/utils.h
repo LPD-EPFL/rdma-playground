@@ -5,26 +5,22 @@
 extern "C" {
 #endif
 
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE 1
-#endif
-
-#include <errno.h>
-#include <pthread.h>
-#include <sched.h>
-#include <stdbool.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <errno.h>
+#include <pthread.h>
+#include <sched.h>
 
 #include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netdb.h>
 #include <ifaddrs.h>
 #include <linux/if_link.h>
-#include <netdb.h>
 #include <netinet/in.h>
-#include <sys/socket.h>
 
 #include <infiniband/verbs.h>
 
@@ -33,41 +29,31 @@ extern "C" {
 #include "constants.h"
 #include "registry.h"
 
-typedef enum { SLOT, MIN_PROPOSAL } write_location_t;
+#define UNUSED(x) (void)x;
 
-#define UNUSED(x) (void)(x)
+typedef enum {SLOT, MIN_PROPOSAL} write_location_t;
+
+
 
 // if x is NON-ZERO, error is printed
-#define TEST_NZ(x, y)    \
-    do {                 \
-        if ((x)) die(y); \
-    } while (0)
+#define TEST_NZ(x,y) do { if ((x)) die(y); } while (0)
 
 // if x is ZERO, error is printed
-#define TEST_Z(x, y)      \
-    do {                  \
-        if (!(x)) die(y); \
-    } while (0)
+#define TEST_Z(x,y) do { if (!(x)) die(y); } while (0)
 
 // if x is NEGATIVE, error is printed
-#define TEST_N(x, y)         \
-    do {                     \
-        if ((x) < 0) die(y); \
-    } while (0)
+#define TEST_N(x,y) do { if ((x)<0) die(y); } while (0)
 
 // if x is NULL, error is printed
-#define TEST_NULL(x, y)          \
-    do {                         \
-        if ((x) == NULL) die(y); \
-    } while (0)
+#define TEST_NULL(x,y) do { if ((x)==NULL) die(y); } while (0)
 
 /**
  * The WR Identifier (WRID)
  * the WRID is a 64-bit value [SSN|WA|TAG|CONN], where
- * SSN is the Send Sequence Number
- * WA is the Wrap-Around flag, set for log update WRs
- * TAG is a flag set for special signaled WRs (to avoid QPs overflow)
- * CONN is a 8-bit index that identifies the connection (the remote server)
+    * SSN is the Send Sequence Number
+    * WA is the Wrap-Around flag, set for log update WRs
+    * TAG is a flag set for special signaled WRs (to avoid QPs overflow)
+    * CONN is a 8-bit index that identifies the connection (the remote server)
  */
 /* The CONN consists of the 8 least significant bits (lsbs) */
 #define WRID_GET_CONN(wrid) (uint8_t)((wrid) & (0xFF))
@@ -82,42 +68,41 @@ typedef enum { SLOT, MIN_PROPOSAL } write_location_t;
 #define WRID_UNSET_WA(wrid) (wrid) &= ~(1 << 9)
 /* The SSN consists of the most significant 54 bits */
 #define WRID_GET_SSN(wrid) ((wrid) >> 10)
-#define WRID_SET_SSN(wrid, ssn) (wrid) = (((ssn) << 10) | ((wrid)&0x3FF))
+#define WRID_SET_SSN(wrid, ssn) (wrid) = (((ssn) << 10) | ((wrid) & 0x3FF))
 
 // Status code categories for work completions
-#define WC_SUCCESS 0
-#define WC_EXPECTED_ERROR 1
+#define WC_SUCCESS          0
+#define WC_EXPECTED_ERROR   1
 #define WC_UNEXPECTED_ERROR 2
 
-static int die(const char *reason) {
+static int die(const char *reason){
     fprintf(stderr, "Err: %s - %s\n ", strerror(errno), reason);
     exit(EXIT_FAILURE);
     return -1;
 }
 
+
 struct ib_connection {
-    int lid;
-    int qpn;
-    int psn;
-    unsigned rkey;
-    unsigned long long vaddr;
+    int                 lid;
+    int                 qpn;
+    int                 psn;
+    unsigned            rkey;
+    unsigned long long  vaddr;
 };
 
 struct qp_context {
-    struct ibv_qp *qp;
+    struct ibv_qp               *qp;
     // MR for reading from a remote log into my local copy of that log
-    // Note: different mr_read MRs refer to different phyisical locations, and
-    // they have minimal permissions
-    struct ibv_mr *mr_read;
+    // Note: different mr_read MRs refer to different phyisical locations, and they have minimal permissions
+    struct ibv_mr               *mr_read;
     // MR for writing from my local log to another node's log
-    // Note: all mr_write MRs refer to the same physical location, but may have
-    // different permissions
-    struct ibv_mr *mr_write;
+    // Note: all mr_write MRs refer to the same physical location, but may have different permissions
+    struct ibv_mr               *mr_write;
 
-    struct ib_connection local_connection;
-    struct ib_connection remote_connection;
-    // char                        *servername; // Igor: should we store this
-    // per-connection? char                        ip_address[NI_MAXHOST];
+    struct ib_connection        local_connection;
+    struct ib_connection        remote_connection;
+    // char                        *servername; // Igor: should we store this per-connection?
+    // char                        ip_address[NI_MAXHOST];
 
     union {
         log_t *log;
@@ -126,33 +111,32 @@ struct qp_context {
 };
 
 struct global_context {
-    struct ibv_device *ib_dev;
-    struct ibv_context *context;
-    struct ibv_pd *pd;
-    struct ibv_cq *cq;
-    struct ibv_comp_channel *ch;
-    struct qp_context *qps;
-    uint64_t round_nb;
-    int num_clients;
-    char *servername;
+    struct ibv_device           *ib_dev;
+    struct ibv_context          *context;
+    struct ibv_pd               *pd;
+    struct ibv_cq               *cq;
+    struct ibv_comp_channel     *ch;
+    struct qp_context           *qps;
+    uint64_t                    round_nb;
+    int                         num_clients;
+    char                        *servername;
     // char                        my_ip_address[NI_MAXHOST];
-    int my_index;  // my_index = i iff my_ip_address is the i-th in the config
-                   // file
+    int                         my_index; // my_index = i iff my_ip_address is the i-th in the config file
 
     union {
         log_t *log;
         le_data_t *le_data;
     } buf;
 
-    int cur_write_permission;  // index of process who currently has write
-                               // permission on my memory
-    size_t len;  // length of buf in bytes (used when registering MRs)
-    uint64_t *completed_ops;
+    int                         cur_write_permission; // index of process who currently has write permission on my memory
+    size_t                      len; // length of buf in bytes (used when registering MRs)
+    uint64_t                    *completed_ops;
 
     struct dory_registry *registry;
 };
 
-static void set_cpu(int cpu) {
+static void
+set_cpu(int cpu) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET(cpu, &cpuset);
@@ -168,4 +152,4 @@ struct global_context create_ctx();
 }
 #endif
 
-#endif  // UTILS_H
+#endif // UTILS_H

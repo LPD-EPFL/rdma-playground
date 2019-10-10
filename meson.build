@@ -7,7 +7,8 @@ add_global_arguments(['-Wno-unused-function',
                       '-Wno-pedantic'],
                      language: ['c', 'cpp'])
 
-# add_global_arguments('-DGNU_SOURCE', language : 'c')
+# Used for linux CPU affinity
+add_global_arguments('-D_GNU_SOURCE', language : ['c', 'cpp'])
 
 inc = [include_directories('include')]
 
