@@ -5,12 +5,12 @@
 extern "C" {
 #endif
 
-#include <sys/mman.h>
 #include <assert.h>
+#include <sys/mman.h>
 
-#define DEFAULT_VALUE_SIZE 8 // value size if it is uint64_t
+#define DEFAULT_VALUE_SIZE 8  // value size if it is uint64_t
 #define DEFAULT_LOG_LENGTH (2ul * 1024 * 1024)
-#define CACHE_LINE_SIZE    64
+#define CACHE_LINE_SIZE 64
 
 struct value_t {
     uint64_t len;
@@ -48,7 +48,7 @@ typedef struct req_ack req_ack_t;
 
 struct le_data {
     counter_t counters;
-    uint64_t len; // nb of entries in perm_reqs
+    uint64_t len;  // nb of entries in perm_reqs
     req_ack_t perm_reqs_acks[0];
 };
 typedef struct le_data le_data_t;
@@ -56,9 +56,9 @@ typedef struct le_data le_data_t;
 // LE_DATA
 /* ================================================================== */
 
-static le_data_t* 
-le_data_new(uint64_t len) {
-    le_data_t *le_data = (le_data_t*) malloc(sizeof(le_data_t) + len * sizeof(req_ack_t));
+static le_data_t *le_data_new(uint64_t len) {
+    le_data_t *le_data =
+        (le_data_t *)malloc(sizeof(le_data_t) + len * sizeof(req_ack_t));
     if (NULL == le_data) {
         return NULL;
     }
@@ -69,22 +69,22 @@ le_data_new(uint64_t len) {
     return le_data;
 }
 
-static void 
-le_data_free( le_data_t* le_data ) {
+static void le_data_free(le_data_t *le_data) {
     if (NULL != le_data) {
         free(le_data);
         le_data = NULL;
     }
 }
 
-static size_t
-le_data_size( le_data_t* le_data) {
+static size_t le_data_size(le_data_t *le_data) {
     return (sizeof(le_data_t) + le_data->len * sizeof(req_ack_t));
 }
 
-static uint64_t
-le_data_get_remote_address(le_data_t* local_le_data, void* local_offset, le_data_t* remote_le_data) {
-    return (uint64_t)remote_le_data + ((uint64_t)local_offset - (uint64_t)local_le_data);
+static uint64_t le_data_get_remote_address(le_data_t *local_le_data,
+                                           void *local_offset,
+                                           le_data_t *remote_le_data) {
+    return (uint64_t)remote_le_data +
+           ((uint64_t)local_offset - (uint64_t)local_le_data);
 }
 
 // LOG
@@ -92,13 +92,11 @@ le_data_get_remote_address(le_data_t* local_le_data, void* local_offset, le_data
 
 // Allocates and initializes a log
 // len = the size in bytes to allocate for slots
-static log_t* 
-log_new() {
-
+static log_t *log_new() {
     size_t size = DEFAULT_LOG_LENGTH;
-    void* m = mmap(NULL, size, PROT_READ | PROT_WRITE,
+    void *m = mmap(NULL, size, PROT_READ | PROT_WRITE,
 
-                    MAP_SHARED | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
+                   MAP_SHARED | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
 
     if (m == MAP_FAILED) {
         perror("map mem");
@@ -123,9 +121,7 @@ log_new() {
 
 // Frees a log
 // log = the log to free
-static void 
-log_free( log_t* log )
-{
+static void log_free(log_t *log) {
     if (NULL != log) {
         munmap(log, log->len + sizeof(log_t));
         log = NULL;
@@ -133,52 +129,47 @@ log_free( log_t* log )
 }
 
 // Returns the size of a log in bytes
-static size_t
-log_size( log_t* log) {
-    return (sizeof(log_t) + log->len);
-}
+static size_t log_size(log_t *log) { return (sizeof(log_t) + log->len); }
 
 // Returns a pointer to a slot at a specified offset in a log
 // log = the log
 // ofsset = the offset of the slot to retrieve
 // Return value: a pointer to the specified slot, or NULL of offset is too large
-static log_slot_t*
-log_get_local_slot(log_t* log, uint64_t offset) {
+static log_slot_t *log_get_local_slot(log_t *log, uint64_t offset) {
     if (offset >= log->len) {
         return NULL;
     }
-    return (log_slot_t*)(log->slots + offset);
+    return (log_slot_t *)(log->slots + offset);
 }
 
 // returns the total size (headers + data) of a log slot at a given offset
-static uint64_t
-log_slot_size(log_t* log, uint64_t offset) {
+static uint64_t log_slot_size(log_t *log, uint64_t offset) {
     return sizeof(log_slot_t) + log_get_local_slot(log, offset)->accValue.len;
 }
 
 // get remote address corresponding to given offset in local log
-// Note: unlike other log methods, the offset here is wrt the beginning of the 
+// Note: unlike other log methods, the offset here is wrt the beginning of the
 // entire log (not the beginning of the slots)
-static uint64_t
-log_get_remote_address(log_t* local_log, void* local_offset, log_t* remote_log) {
-    return (uint64_t)remote_log + ((uint64_t)local_offset - (uint64_t)local_log);
+static uint64_t log_get_remote_address(log_t *local_log, void *local_offset,
+                                       log_t *remote_log) {
+    return (uint64_t)remote_log +
+           ((uint64_t)local_offset - (uint64_t)local_log);
 }
 
-static uint64_t
-next_offset_cache_aligned (uint64_t offset) {
+static uint64_t next_offset_cache_aligned(uint64_t offset) {
     return (offset + (CACHE_LINE_SIZE - 1)) & ~(CACHE_LINE_SIZE - 1);
 }
 
 // increments the firstUndecidedOffset of a log
-static void
-log_increment_fuo(log_t *log) {
-    uint64_t offset = log->firstUndecidedOffset + log_slot_size(log, log->firstUndecidedOffset);
+static void log_increment_fuo(log_t *log) {
+    uint64_t offset = log->firstUndecidedOffset +
+                      log_slot_size(log, log->firstUndecidedOffset);
     offset = next_offset_cache_aligned(offset);
     log->firstUndecidedOffset = offset;
 }
 
-static void
-log_write_local_slot(log_t* log, uint64_t offset, uint64_t propNr, value_t* v) {
+static void log_write_local_slot(log_t *log, uint64_t offset, uint64_t propNr,
+                                 value_t *v) {
     log_slot_t *slot = log_get_local_slot(log, offset);
 
     slot->accProposal = propNr;
@@ -186,8 +177,8 @@ log_write_local_slot(log_t* log, uint64_t offset, uint64_t propNr, value_t* v) {
     memcpy(slot->accValue.val, v->val, v->len);
 }
 
-static void
-log_write_local_slot_uint64(log_t* log, uint64_t offset, uint64_t propNr, uint64_t val) {
+static void log_write_local_slot_uint64(log_t *log, uint64_t offset,
+                                        uint64_t propNr, uint64_t val) {
     log_slot_t *slot = log_get_local_slot(log, offset);
 
     slot->accProposal = propNr;
@@ -195,53 +186,53 @@ log_write_local_slot_uint64(log_t* log, uint64_t offset, uint64_t propNr, uint64
     *(uint64_t *)slot->accValue.val = val;
 }
 
-static void
-log_write_local_slot_string(log_t* log, uint64_t offset, uint64_t propNr, char* val) {
+static void log_write_local_slot_string(log_t *log, uint64_t offset,
+                                        uint64_t propNr, char *val) {
     log_slot_t *slot = log_get_local_slot(log, offset);
 
     slot->accProposal = propNr;
     slot->accValue.len = strlen(val);
-    strcpy((char*)slot->accValue.val, val);
+    strcpy((char *)slot->accValue.val, val);
 }
 
 static void printchar(unsigned char theChar) {
-   switch (theChar) {
-       case '\n':
-           printf("\\n");
-           break;
-       case '\r':
-           printf("\\r");
-           break;
-       case '\t':
-           printf("\\t");
-           break;
-       default:
-           if ((theChar < 0x20) || (theChar > 0x7f)) {
-               printf("\\%03o", (unsigned char)theChar);
-           } else {
-               printf("%c", theChar);
-           }
-       break;
-  }
+    switch (theChar) {
+        case '\n':
+            printf("\\n");
+            break;
+        case '\r':
+            printf("\\r");
+            break;
+        case '\t':
+            printf("\\t");
+            break;
+        default:
+            if ((theChar < 0x20) || (theChar > 0x7f)) {
+                printf("\\%03o", (unsigned char)theChar);
+            } else {
+                printf("%c", theChar);
+            }
+            break;
+    }
 }
 
-static void
-log_print_slot_generic(log_slot_t* slot) {
+static void log_print_slot_generic(log_slot_t *slot) {
     printf("[%lu, ", slot->accProposal);
     for (uint64_t i = 0; i < slot->accValue.len; i++) {
-        printchar(((unsigned char*)slot->accValue.val)[i]);
+        printchar(((unsigned char *)slot->accValue.val)[i]);
     }
     printf("] ");
 }
 
-static void
-log_print(log_t* log) {
-    printf("{ minProposal = %lu, firstUndecidedOffset = %lu, len = %lu, ", log->minProposal, log->firstUndecidedOffset, log->len);
+static void log_print(log_t *log) {
+    printf("{ minProposal = %lu, firstUndecidedOffset = %lu, len = %lu, ",
+           log->minProposal, log->firstUndecidedOffset, log->len);
     uint64_t offset = 0;
     log_slot_t *slot = log_get_local_slot(log, offset);
     while (slot->accValue.len != 0) {
         if (slot->accValue.len == 8) {
-            printf("[%lu, %lu] ", slot->accProposal, *(uint64_t*)slot->accValue.val);
+            printf("[%lu, %lu] ", slot->accProposal,
+                   *(uint64_t *)slot->accValue.val);
         } else {
             log_print_slot_generic(slot);
         }
@@ -252,19 +243,16 @@ log_print(log_t* log) {
     printf("}\n");
 }
 
-static value_t*
-new_value(uint8_t* buf, size_t len) {
-    value_t* v = (value_t*)malloc(sizeof(value_t) + len + 1); // +1 for the canary value
+static value_t *new_value(uint8_t *buf, size_t len) {
+    value_t *v = (value_t *)malloc(sizeof(value_t) + len +
+                                   1);  // +1 for the canary value
     v->len = len + 1;
-    v->val[len] = 0xFF; // the canary value
+    v->val[len] = 0xFF;  // the canary value
     memcpy(v->val, buf, len);
     return v;
 }
 
-static void
-free_value(value_t* v) {
-    free(v);
-}
+static void free_value(value_t *v) { free(v); }
 
 #ifdef __cplusplus
 }

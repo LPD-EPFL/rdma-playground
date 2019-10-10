@@ -13,7 +13,7 @@ void toml_parse_general(toml_table_t *conf, int64_t *clients, int64_t *id);
 
 // Optional
 void toml_parse_ips(toml_table_t *conf, char ***ips, int *len);
-char* toml_getenv(const char* name);
+char *toml_getenv(const char *name);
 
 #ifdef __cplusplus
 }

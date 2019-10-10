@@ -4,10 +4,10 @@
 #include "propose_api.h"
 
 int main() {
-        consensus_setup();
-        consensus_propose_test2();
-        getchar();
-        consensus_shutdown();
+    consensus_setup();
+    consensus_propose_test2();
+    getchar();
+    consensus_shutdown();
 
     return 0;
 }

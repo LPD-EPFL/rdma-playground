@@ -5,15 +5,15 @@
 extern "C" {
 #endif
 
-#include "utils.h"
 #include "ibv_layer.h"
 #include "rdma-consensus.h"
+#include "utils.h"
 
 void spawn_leader_election_thread();
-void* leader_election(void* arg);
+void *leader_election(void *arg);
 void rdma_read_all_counters();
 int decide_leader();
-void rdma_ask_permission(le_data_t* le_data, uint64_t my_index, bool signaled);
+void rdma_ask_permission(le_data_t *le_data, uint64_t my_index, bool signaled);
 void check_permission_requests();
 
 void start_leader_election();
@@ -24,4 +24,4 @@ void shutdown_leader_election_thread();
 }
 #endif
 
-#endif // LEADER_ELECTION_H
+#endif  // LEADER_ELECTION_H
