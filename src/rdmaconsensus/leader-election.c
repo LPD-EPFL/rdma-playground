@@ -317,6 +317,7 @@ void check_permission_requests() {
                               // indexes into qps (n-1 entries total)
             printf("Permission request from %d, my_index = %d, j = %d\n", i,
                    le_ctx.my_index, j);
+            printf("rkeys before:%u, %u\n", g_ctx.qps[0].mr_write->rkey, g_ctx.qps[1].mr_write->rkey);
             permission_switch(
                 g_ctx.qps[g_ctx.cur_write_permission]
                     .mr_write,          // mr losing permission
@@ -325,6 +326,9 @@ void check_permission_requests() {
                 (IBV_ACCESS_REMOTE_READ | IBV_ACCESS_LOCAL_WRITE),
                 (IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE |
                  IBV_ACCESS_LOCAL_WRITE));
+
+            printf("rkeys after:%u, %u\n", g_ctx.qps[0].mr_write->rkey, g_ctx.qps[1].mr_write->rkey);
+
             g_ctx.cur_write_permission = j;
 
             // send ack

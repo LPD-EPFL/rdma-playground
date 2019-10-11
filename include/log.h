@@ -95,6 +95,7 @@ static uint64_t le_data_get_remote_address(le_data_t *local_le_data,
 // len = the size in bytes to allocate for slots
 static log_t *log_new() {
     size_t size = DEFAULT_LOG_LENGTH;
+    #if 0
     void *m = mmap(NULL, size, PROT_READ | PROT_WRITE,
 
                    MAP_SHARED | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
@@ -108,11 +109,13 @@ static log_t *log_new() {
     uint64_t alignment = 2UL * 1024 * 1024;
     assert((uint64_t)m % alignment == 0 && "Not aligned");
 
-    // log_t *log = (log_t*) malloc(sizeof(log_t) + DEFAULT_LOG_LENGTH);
-    // if (NULL == log) {
-    //     return NULL;
-    // }
     log_t *log = (log_t *)m;
+    #endif
+
+    log_t *log = (log_t*) malloc(size);
+    if (NULL == log) {
+        return NULL;
+    }
 
     memset(log, 0, size);
     log->len = size - sizeof(log_t);
@@ -123,8 +126,12 @@ static log_t *log_new() {
 // Frees a log
 // log = the log to free
 static void log_free(log_t *log) {
+    // if (NULL != log) {
+    //     munmap(log, log->len + sizeof(log_t));
+    //     log = NULL;
+    // }
     if (NULL != log) {
-        munmap(log, log->len + sizeof(log_t));
+        free(log);
         log = NULL;
     }
 }
