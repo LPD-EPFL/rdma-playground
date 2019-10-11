@@ -34,7 +34,7 @@
 #include <math.h>
 #include <ctype.h>
 
-#include "propose_api.h"
+#include <propose_api.h>
 
 static void setProtocolError(const char *errstr, client *c);
 
@@ -631,7 +631,7 @@ void addReplySubcommandSyntaxError(client *c) {
     sdsfree(cmd);
 }
 
-/* Append 'src' client output buffers into 'dst' client output buffers. 
+/* Append 'src' client output buffers into 'dst' client output buffers.
  * This function clears the output buffers of 'src' */
 void AddReplyFromClient(client *dst, client *src) {
     if (prepareClientToWrite(dst) != C_OK)
