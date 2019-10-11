@@ -81,11 +81,8 @@ bool propose_inner(uint8_t *buf, size_t len) {
             need_prepare_phase = false;
             // adopt my value
             // printf("About to adopt my value\n");
-            if (v == NULL) {
-                v = new_value(buf, len);
-            } else {
-                // memcpy(v->val, buf, len);
-            }
+            v = new_value(buf, len);
+
         }
 
         // write v into slot at position "offset" at a majority of logs // if
@@ -97,13 +94,13 @@ bool propose_inner(uint8_t *buf, size_t len) {
             return false;
         }
 
-        // if (memcmp(v->val, buf, len) == 0) { // I managed to replicate my
+        if (memcmp(v->val, buf, len) == 0) { // I managed to replicate my
         // value printf("Inner propose is done\n");
-        inner_done = true;
-        // free_value(v);
-        // } else {
-        // printf("Inner propose is not done\n");
-        // }
+            inner_done = true;
+            free_value(v);
+        } else {
+            printf("Inner propose is not done\n");
+        }
         // increment the firstUndecidedOffset
         log_increment_fuo(g_ctx.buf.log);
     }
@@ -194,8 +191,8 @@ int write_log_slot(log_t *log, uint64_t offset, value_t *value) {
     //     (char*)value->val);
     // }
 
-    log_write_local_slot_uint64(log, offset, g_prop_nr, 42);
-    // log_write_local_slot(log, offset, g_prop_nr, value);
+    // log_write_local_slot_uint64(log, offset, g_prop_nr, 42);
+    log_write_local_slot(log, offset, g_prop_nr, value);
 
     // post sends to everyone
     bool signaled = false;
