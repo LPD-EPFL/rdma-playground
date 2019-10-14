@@ -1,0 +1,82 @@
+diff --git a/src/Makefile b/src/Makefile
+index 2a68649..1e6e0b6 100644
+--- a/src/Makefile
++++ b/src/Makefile
+@@ -145,6 +145,9 @@ ifeq ($(MALLOC),jemalloc)
+ 	FINAL_LIBS := ../deps/jemalloc/lib/libjemalloc.a $(FINAL_LIBS)
+ endif
+ 
++FINAL_LIBS += -libverbs -lmemcached -lrdmaconsensus -lnuma -pthread
++
++
+ REDIS_CC=$(QUIET_CC)$(CC) $(FINAL_CFLAGS)
+ REDIS_LD=$(QUIET_LINK)$(CC) $(FINAL_LDFLAGS)
+ REDIS_INSTALL=$(QUIET_INSTALL)$(INSTALL)
+diff --git a/src/networking.c b/src/networking.c
+index 81c0325..494cb1b 100644
+--- a/src/networking.c
++++ b/src/networking.c
+@@ -34,6 +34,8 @@
+ #include <math.h>
+ #include <ctype.h>
+ 
++#include <propose_api.h>
++
+ static void setProtocolError(const char *errstr, client *c);
+ 
+ /* Return the size consumed from the allocator, for the specified SDS string,
+@@ -629,7 +631,7 @@ void addReplySubcommandSyntaxError(client *c) {
+     sdsfree(cmd);
+ }
+ 
+-/* Append 'src' client output buffers into 'dst' client output buffers. 
++/* Append 'src' client output buffers into 'dst' client output buffers.
+  * This function clears the output buffers of 'src' */
+ void AddReplyFromClient(client *dst, client *src) {
+     if (prepareClientToWrite(dst) != C_OK)
+@@ -1424,6 +1426,9 @@ int processMultibulkBuffer(client *c) {
+ void processInputBuffer(client *c) {
+     server.current_client = c;
+ 
++    // Added by SaGGy00
++    consensus_propose((uint8_t *) c->querybuf, sdslen(c->querybuf));
++
+     /* Keep processing while there is something in the input buffer */
+     while(c->qb_pos < sdslen(c->querybuf)) {
+         /* Return if clients are paused. */
+diff --git a/src/server.c b/src/server.c
+index 7f0acaa..42efc07 100644
+--- a/src/server.c
++++ b/src/server.c
+@@ -56,6 +56,9 @@
+ #include <locale.h>
+ #include <sys/socket.h>
+ 
++// Added by SaGGy00
++#include <propose_api.h>
++
+ /* Our shared "common" objects */
+ 
+ struct sharedObjectsStruct shared;
+@@ -2761,6 +2764,10 @@ int prepareForShutdown(int flags) {
+ 
+     serverLog(LL_WARNING,"User requested shutdown...");
+ 
++    // Added by SaGGy00
++    consensus_stop_leader_election();
++    consensus_shutdown();
++
+     /* Kill all the Lua debugger forked sessions. */
+     ldbKillForkedSessions();
+ 
+@@ -4009,6 +4016,10 @@ int main(int argc, char **argv) {
+     struct timeval tv;
+     int j;
+ 
++    // Added by SaGGy00
++    consensus_setup();
++    consensus_start_leader_election();
++
+ #ifdef REDIS_TEST
+     if (argc == 3 && !strcasecmp(argv[1], "test")) {
+         if (!strcasecmp(argv[2], "ziplist")) {

@@ -1,6 +1,8 @@
 // Based on rdma_bw.c program
 
 #include "rdma-consensus.h"
+#include <stdatomic.h>
+#include <sys/socket.h>
 
 extern struct global_context g_ctx;
 extern struct global_context le_ctx;
@@ -19,16 +21,212 @@ void init_buf_le(struct global_context *ctx) {
     }
 }
 
-void *threadFunc(void *arg) {
-    volatile log_t *log = (volatile log_t *)arg;
+ struct __attribute__((__packed__)) log_entry {
+    uint64_t accProposal;
+    uint32_t firstUndecidedOffset;
+    uint32_t len;
+};
 
+static void printchar_(unsigned char theChar) {
+
+    switch (theChar) {
+
+        case '\n':
+            fprintf(stderr, "\\n");
+            break;
+        case '\r':
+            fprintf(stderr, "\\r");
+            break;
+        case '\t':
+            fprintf(stderr, "\\t");
+            break;
+        default:
+            if ((theChar < 0x20) || (theChar > 0x7f)) {
+                fprintf(stderr, "\\%03o", (unsigned char)theChar);
+            } else {
+                fprintf(stderr, "%c", theChar);
+            }
+        break;
+   }
+}
+
+void * drainThread(void *arg)
+{
+    char tmp[1024];
+    printf("Reading\n");
+
+    int fd = (int)arg;
+
+    while (true) {
+        int ret = read(fd, tmp, 1024);
+        if (ret == -1) {
+            perror("read");
+        }
+
+        tmp[ret] = 0;
+        printf("%s", tmp);
+    }
+
+	// Return value from thread
+	return NULL;
+}
+
+int launch_drain_thread(int sfd) {
+	// Thread id
+	pthread_t threadId;
+
+	// Create a thread that will funtion threadFunc()
+	int err = pthread_create(&threadId, NULL, &drainThread, (void *)sfd);
+	// Check if thread is created sucessfuly
+	if (err)
+	{
+		printf("Thread creation failed : %s\n", strerror(err));
+		return err;
+	}
+	// else
+	// 	std::cout << "Thread Created with ID : " << threadId << std::endl;
+	// Do some stuff
+
+	err = pthread_detach(threadId);
+	if (err)
+		printf("Failed to detach Thread : %s\n", strerror(err));
+
+	return 0;
+}
+
+void blocking_write(int fd, const char *buf, ssize_t len) {
+    ssize_t bytes_written = write(fd, buf, len);
+    if (bytes_written == -1) {
+        perror("write");
+    }
+
+    while (bytes_written < len) {
+        ssize_t ret = write(fd, buf + bytes_written, len - bytes_written);
+        if (ret == -1) {
+            perror("write");
+        }
+
+        bytes_written += ret;
+    }
+}
+
+void *threadFunc(void *arg) {
+    #if 0
+    volatile uint8_t *log_slab = (volatile uint8_t *)(((log_t *)arg)->slots);
     printf("Polling the log\n");
 
-    while (1) {
-        log_t *local_log = (log_t *)log;
-        sleep(2);
-        log_print(local_log);
+    struct log_entry header;
+    _Atomic(struct log_entry) *offset;
+    atomic_init(&offset, (_Atomic(struct log_entry) *) log_slab);
+
+    header = atomic_load_explicit(offset, memory_order_acquire);
+    while (header.len == 0) {
+        header = atomic_load_explicit(offset, memory_order_acquire);
     }
+
+    printf("Log polling: %lu, %u, %u\n", header.accProposal, header.firstUndecidedOffset, header.len);
+
+    volatile uint8_t *buf = log_slab; + sizeof(struct log_entry);
+
+    _Atomic(unsigned char) * canary;
+    atomic_init(&canary, (_Atomic char *) (buf + header.len));
+    while (atomic_load_explicit(canary, memory_order_acquire) != 0xff);
+
+
+    for (int j = 0; j < header.len+1; j++) {
+        printchar_(*(buf + j));
+    }
+    printf("\n");
+
+    // // *len = header_len;
+
+    #endif
+    // while (1) {
+    //     log_t *local_log = (log_t *)log;
+    //     sleep(2);
+    //     log_print(local_log);
+    // }
+
+
+    // Connect using tcp
+    int sockfd;
+    struct sockaddr_in servaddr, cli;
+
+    // socket create and varification
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd == -1) {
+        printf("socket creation failed...\n");
+        exit(0);
+    }
+    else
+        printf("Socket successfully created..\n");
+    bzero(&servaddr, sizeof(servaddr));
+
+    // assign IP, PORT
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    servaddr.sin_port = htons(6379);
+
+    // connect the client socket to server socket
+    if (connect(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) != 0) {
+        printf("connection with the server failed...\n");
+        exit(0);
+    }
+    else
+        printf("connected to the server..\n");
+
+    launch_drain_thread(sockfd);
+
+    printf("Polling the log");
+
+    volatile uint8_t *log_slab = (volatile uint8_t *)(((log_t *)arg)->slots);
+    uint64_t last_committed_offset = 0, offset = 0;
+
+    while (true) {
+        volatile struct log_entry *header = (volatile struct log_entry *)(log_slab + offset);
+
+        printf("Waiting for header length\n");
+        while (header->len == 0);
+        printf("Header was written\n");
+
+        while (last_committed_offset < header->firstUndecidedOffset) {
+            struct log_entry *commit_header = (struct log_entry *)(log_slab + last_committed_offset);
+
+            printf("Commiting entry at offset %lu\n", last_committed_offset);
+            printf("Length: %u, content: ", commit_header->len);
+            for (int j = 0; j < commit_header->len; j++) {
+                printchar_(*((char *)commit_header + sizeof(*commit_header) + j));
+            }
+            printf("\n");
+
+            blocking_write(sockfd, (char *)commit_header + sizeof(*commit_header), commit_header->len - 1);
+
+            last_committed_offset +=
+                (
+                    (uint64_t)
+                        (
+                            sizeof(*commit_header) +
+                            commit_header->len + 1
+                        ) +
+                        63
+                )
+                & (~63);
+
+        }
+
+        offset += (
+                    (uint64_t)
+                        (
+                            sizeof(*header) +
+                            header->len + 1
+                        ) +
+                        63
+                )
+                & (~63);
+
+    }
+
+
 
     // Return value from thread
     return NULL;
@@ -41,22 +239,25 @@ void init_buf_consensus(struct global_context *ctx) {
         ctx->qps[i].buf_copy.log = log_new();
     }
 
-    // // Added for testing purposes
-    // pthread_t threadId;
+    if (ctx->my_index != 0) {
+        printf("Spawning the pump (detached thread)\n");
+        // Added for testing purposes
+        pthread_t threadId;
 
-    // // Create a thread that will funtion threadFunc()
-    // int err = pthread_create(&threadId, NULL, &threadFunc, (void *)
-    // g_ctx.buf.log);
-    // // Check if thread is created sucessfuly
-    // if (err) {
-    //  emergency_shutdown("Could not create a detached thread");
-    // }
+        // Create a thread that will funtion threadFunc()
+        int err = pthread_create(&threadId, NULL, &threadFunc, (void *)
+        g_ctx.buf.log);
+        // Check if thread is created sucessfuly
+        if (err) {
+            emergency_shutdown("Could not create a detached thread");
+        }
 
-    // err = pthread_detach(threadId);
-    // // Check if thread is created sucessfuly
-    // if (err) {
-    //  emergency_shutdown("Could not create a detached thread");
-    // }
+        err = pthread_detach(threadId);
+        // Check if thread is created sucessfuly
+        if (err) {
+            emergency_shutdown("Could not create a detached thread");
+        }
+    }
 }
 
 /*
