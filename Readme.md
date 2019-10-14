@@ -35,9 +35,14 @@ $ make install
 
 ### Compilation
 ```sh
-$cd rdma-playground/
+$ cd rdma-playground/
 $ meson builddir && cd builddir
 $ ninja
+```
+
+In order to build the project with libraries installed locally, use the following command insted:
+```sh
+$ meson --libdir=lib --prefix=~/.local builddir
 ```
 
 Instead of `ninja` you can compile only the `propose-test` target as follows:
