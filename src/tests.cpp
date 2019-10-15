@@ -86,9 +86,9 @@ class Environment : public ::testing::Environment {
         printf("Consensus thread connections:\n");
         for (int i = 0; i < g_ctx.num_clients; ++i) {
             print_ib_connection("Local  Connection",
-                                &g_ctx.qps[i].local_connection);
+                                &g_ctx.qps[i].rc_local_connection);
             print_ib_connection("Remote Connection",
-                                &g_ctx.qps[i].remote_connection);
+                                &g_ctx.qps[i].rc_remote_connection);
         }
 
         for (int i = 0; i < g_ctx.num_clients; ++i) {
@@ -122,9 +122,9 @@ TEST(RDMATest, LeaderElectionAskPermission) {
         // sleep(1);
         printf("0 trying to write to 2 -> should succeed\n");
         post_send(
-            g_ctx.qps[1].qp, g_ctx.buf.log, sizeof(uint64_t),
-            g_ctx.qps[1].mr_write->lkey, g_ctx.qps[1].remote_connection.rkey,
-            g_ctx.qps[1].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
+            g_ctx.qps[1].rc_qp, g_ctx.buf.log, sizeof(uint64_t),
+            g_ctx.qps[1].mr_write->lkey, g_ctx.qps[1].rc_remote_connection.rkey,
+            g_ctx.qps[1].rc_remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
         // check the CQ
         sleep(1);
         int ne;
@@ -145,14 +145,14 @@ TEST(RDMATest, LeaderElectionAskPermission) {
         sleep(2);
         printf("1 trying to write to 0 -> should succeed\n");
         post_send(
-            g_ctx.qps[0].qp, g_ctx.buf.log, sizeof(uint64_t),
-            g_ctx.qps[0].mr_write->lkey, g_ctx.qps[0].remote_connection.rkey,
-            g_ctx.qps[0].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
+            g_ctx.qps[0].rc_qp, g_ctx.buf.log, sizeof(uint64_t),
+            g_ctx.qps[0].mr_write->lkey, g_ctx.qps[0].rc_remote_connection.rkey,
+            g_ctx.qps[0].rc_remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
         printf("1 trying to write to 2 -> should not succeed\n");
         post_send(
-            g_ctx.qps[1].qp, g_ctx.buf.log, sizeof(uint64_t),
-            g_ctx.qps[1].mr_write->lkey, g_ctx.qps[1].remote_connection.rkey,
-            g_ctx.qps[1].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 43, true);
+            g_ctx.qps[1].rc_qp, g_ctx.buf.log, sizeof(uint64_t),
+            g_ctx.qps[1].mr_write->lkey, g_ctx.qps[1].rc_remote_connection.rkey,
+            g_ctx.qps[1].rc_remote_connection.vaddr, IBV_WR_RDMA_WRITE, 43, true);
 
         // check the CQ
         sleep(1);
@@ -200,9 +200,9 @@ TEST(RDMATest, LeaderElectionAskPermission2) {
         sleep(1);
         printf("1 trying to write to 0 -> should succeed\n");
         post_send(
-            g_ctx.qps[0].qp, g_ctx.buf.log, sizeof(uint64_t),
-            g_ctx.qps[0].mr_write->lkey, g_ctx.qps[0].remote_connection.rkey,
-            g_ctx.qps[0].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
+            g_ctx.qps[0].rc_qp, g_ctx.buf.log, sizeof(uint64_t),
+            g_ctx.qps[0].mr_write->lkey, g_ctx.qps[0].rc_remote_connection.rkey,
+            g_ctx.qps[0].rc_remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
         // check the CQ
         sleep(1);
         int ne;
@@ -223,14 +223,14 @@ TEST(RDMATest, LeaderElectionAskPermission2) {
         sleep(2);
         printf("0 trying to write to 1 -> should succeed\n");
         post_send(
-            g_ctx.qps[0].qp, g_ctx.buf.log, sizeof(uint64_t),
-            g_ctx.qps[0].mr_write->lkey, g_ctx.qps[0].remote_connection.rkey,
-            g_ctx.qps[0].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
+            g_ctx.qps[0].rc_qp, g_ctx.buf.log, sizeof(uint64_t),
+            g_ctx.qps[0].mr_write->lkey, g_ctx.qps[0].rc_remote_connection.rkey,
+            g_ctx.qps[0].rc_remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
         printf("0 trying to write to 2 -> should not succeed\n");
         post_send(
-            g_ctx.qps[1].qp, g_ctx.buf.log, sizeof(uint64_t),
-            g_ctx.qps[1].mr_write->lkey, g_ctx.qps[1].remote_connection.rkey,
-            g_ctx.qps[1].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 43, true);
+            g_ctx.qps[1].rc_qp, g_ctx.buf.log, sizeof(uint64_t),
+            g_ctx.qps[1].mr_write->lkey, g_ctx.qps[1].rc_remote_connection.rkey,
+            g_ctx.qps[1].rc_remote_connection.vaddr, IBV_WR_RDMA_WRITE, 43, true);
 
         // check the CQ
         sleep(1);
@@ -299,9 +299,9 @@ TEST(RDMATest, UnexpectedError) {
         WRID_SET_SSN(wrid, g_ctx.round_nb);
         WRID_SET_CONN(wrid, 1);
         post_send(
-            g_ctx.qps[1].qp, g_ctx.buf.log, sizeof(uint64_t),
-            g_ctx.qps[1].mr_write->lkey, g_ctx.qps[1].remote_connection.rkey,
-            g_ctx.qps[1].remote_connection.vaddr, IBV_WR_RDMA_READ, wrid, true);
+            g_ctx.qps[1].rc_qp, g_ctx.buf.log, sizeof(uint64_t),
+            g_ctx.qps[1].mr_write->lkey, g_ctx.qps[1].rc_remote_connection.rkey,
+            g_ctx.qps[1].rc_remote_connection.vaddr, IBV_WR_RDMA_READ, wrid, true);
         // wait for completion -> should crash
         struct ibv_wc wc;
         wait_for_n(1, g_ctx.round_nb, &g_ctx, 1, &wc, g_ctx.completed_ops);
@@ -338,28 +338,28 @@ TEST(RDMATest, BigTest) {
         // write to 1 5 times
         for (int i = 0; i < 5; ++i) {
             /* code */
-            post_send(g_ctx.qps[0].qp, g_ctx.buf.log, sizeof(uint64_t),
+            post_send(g_ctx.qps[0].rc_qp, g_ctx.buf.log, sizeof(uint64_t),
                       g_ctx.qps[0].mr_write->lkey,
-                      g_ctx.qps[0].remote_connection.rkey,
-                      g_ctx.qps[0].remote_connection.vaddr, IBV_WR_RDMA_WRITE,
+                      g_ctx.qps[0].rc_remote_connection.rkey,
+                      g_ctx.qps[0].rc_remote_connection.vaddr, IBV_WR_RDMA_WRITE,
                       i, true);
         }
         // write to 2 -> error
         for (int i = 0; i < 5; i++) {
-            post_send(g_ctx.qps[1].qp, g_ctx.buf.log, sizeof(uint64_t),
+            post_send(g_ctx.qps[1].rc_qp, g_ctx.buf.log, sizeof(uint64_t),
                       g_ctx.qps[1].mr_write->lkey,
-                      g_ctx.qps[1].remote_connection.rkey,
-                      g_ctx.qps[1].remote_connection.vaddr, IBV_WR_RDMA_WRITE,
+                      g_ctx.qps[1].rc_remote_connection.rkey,
+                      g_ctx.qps[1].rc_remote_connection.vaddr, IBV_WR_RDMA_WRITE,
                       42 + i, true);
         }
         // write to 1 5 times
         sleep(1);
         for (int i = 0; i < 5; ++i) {
             /* code */
-            post_send(g_ctx.qps[0].qp, g_ctx.buf.log, sizeof(uint64_t),
+            post_send(g_ctx.qps[0].rc_qp, g_ctx.buf.log, sizeof(uint64_t),
                       g_ctx.qps[0].mr_write->lkey,
-                      g_ctx.qps[0].remote_connection.rkey,
-                      g_ctx.qps[0].remote_connection.vaddr, IBV_WR_RDMA_WRITE,
+                      g_ctx.qps[0].rc_remote_connection.rkey,
+                      g_ctx.qps[0].rc_remote_connection.vaddr, IBV_WR_RDMA_WRITE,
                       i + 5, true);
         }
         // check the CQ

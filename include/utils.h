@@ -91,7 +91,8 @@ struct ib_connection {
 };
 
 struct qp_context {
-    struct ibv_qp               *qp;
+    struct ibv_qp               *rc_qp;
+    struct ibv_qp               *uc_qp;
     // MR for reading from a remote log into my local copy of that log
     // Note: different mr_read MRs refer to different phyisical locations, and they have minimal permissions
     struct ibv_mr               *mr_read;
@@ -99,8 +100,10 @@ struct qp_context {
     // Note: all mr_write MRs refer to the same physical location, but may have different permissions
     struct ibv_mr               *mr_write;
 
-    struct ib_connection        local_connection;
-    struct ib_connection        remote_connection;
+    struct ib_connection        rc_local_connection;
+    struct ib_connection        rc_remote_connection;
+    struct ib_connection        uc_local_connection;
+    struct ib_connection        uc_remote_connection;
     // char                        *servername; // Igor: should we store this per-connection?
     // char                        ip_address[NI_MAXHOST];
 

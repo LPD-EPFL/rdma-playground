@@ -92,9 +92,9 @@ void *leader_election(void *arg) {
     printf("Leader election connections:\n");
     for (int i = 0; i < le_ctx.num_clients; ++i) {
         print_ib_connection("Local  Connection",
-                            &le_ctx.qps[i].local_connection);
+                            &le_ctx.qps[i].rc_local_connection);
         print_ib_connection("Remote Connection",
-                            &le_ctx.qps[i].remote_connection);
+                            &le_ctx.qps[i].rc_remote_connection);
     }
 
     // bring the qps to the right states
@@ -161,11 +161,11 @@ void rdma_read_all_counters() {
         WRID_SET_CONN(wrid, i);
         remote_addr =
             le_ctx.qps[i]
-                .remote_connection.vaddr;  // remote offset = 0; we are reading
+                .rc_remote_connection.vaddr;  // remote offset = 0; we are reading
                                            // the first word = count_cur
-        post_send(le_ctx.qps[i].qp, local_address, req_size,
+        post_send(le_ctx.qps[i].rc_qp, local_address, req_size,
                   le_ctx.qps[i].mr_read->lkey,
-                  le_ctx.qps[i].remote_connection.rkey, remote_addr,
+                  le_ctx.qps[i].rc_remote_connection.rkey, remote_addr,
                   IBV_WR_RDMA_READ, wrid, true);
     }
 
@@ -241,10 +241,10 @@ void rdma_ask_permission(le_data_t *le_data, uint64_t my_index, bool signaled) {
         WRID_SET_CONN(wrid, i);
         remote_addr = le_data_get_remote_address(
             le_data, local_address,
-            ((le_data_t *)le_ctx.qps[i].remote_connection.vaddr));
-        post_send(g_ctx.qps[i].qp, local_address, req_size,
+            ((le_data_t *)le_ctx.qps[i].rc_remote_connection.vaddr));
+        post_send(g_ctx.qps[i].rc_qp, local_address, req_size,
                   le_ctx.qps[i].mr_write->lkey,
-                  le_ctx.qps[i].remote_connection.rkey, remote_addr,
+                  le_ctx.qps[i].rc_remote_connection.rkey, remote_addr,
                   IBV_WR_RDMA_WRITE, wrid, signaled);
     }
 
@@ -284,10 +284,10 @@ static void send_perm_ack(int index) {
     WRID_SET_CONN(wrid, index);
     remote_addr = le_data_get_remote_address(
         le_ctx.buf.le_data, local_address,
-        ((le_data_t *)le_ctx.qps[index].remote_connection.vaddr));
-    post_send(g_ctx.qps[index].qp, local_address, req_size,
+        ((le_data_t *)le_ctx.qps[index].rc_remote_connection.vaddr));
+    post_send(g_ctx.qps[index].rc_qp, local_address, req_size,
               le_ctx.qps[index].mr_write->lkey,
-              le_ctx.qps[index].remote_connection.rkey, remote_addr,
+              le_ctx.qps[index].rc_remote_connection.rkey, remote_addr,
               IBV_WR_RDMA_WRITE, wrid, true);
 
     nanosleep((const struct timespec[]){{0, SHORT_SLEEP_DURATION_NS}}, NULL);
