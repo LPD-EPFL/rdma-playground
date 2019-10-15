@@ -109,7 +109,7 @@ void consensus_propose_test1() {
 void consensus_propose_test2() {
     uint64_t val;
 
-    start_leader_election();
+    // start_leader_election();
 
     if (g_ctx.my_index == 0) {
         propose((uint8_t *)&val, sizeof(val));
@@ -130,8 +130,8 @@ void consensus_propose_test2() {
         log_print(g_ctx.buf.log);
     }
 
-    stop_leader_election();
-    shutdown_leader_election_thread();
+    // stop_leader_election();
+    // shutdown_leader_election_thread();
 }
 
 void consensus_propose_test3() {

@@ -28,7 +28,7 @@ bool propose(uint8_t *buf, size_t len) {
             // rdma_ask_permission(le_ctx.buf.le_data, le_ctx.my_index, true);
             // // should always succeed
 
-            rc = update_followers();
+            // rc = update_followers();
             if (rc) continue;
 
             need_init = false;
@@ -50,29 +50,29 @@ bool propose_inner(uint8_t *buf, size_t len) {
     while (!inner_done) {
         offset = g_ctx.buf.log->firstUndecidedOffset;
         // printf("Offset is %lu \n", offset);
-        if (need_prepare_phase) {
-            rc = read_min_proposals();  // should always succeed
-            if (rc) {
-                need_init = true;
-                return false;
-            }
+        // if (need_prepare_phase) {
+        //     rc = read_min_proposals();  // should always succeed
+        //     if (rc) {
+        //         need_init = true;
+        //         return false;
+        //     }
 
-            if (!min_proposal_ok()) {  // check if any of the read minProposals
-                                       // are larger than our g_prop_nr
-                g_prop_nr +=
-                    g_ctx.num_clients + 1;  // increment proposal number
-                continue;
-            }
+        //     if (!min_proposal_ok()) {  // check if any of the read minProposals
+        //                                // are larger than our g_prop_nr
+        //         g_prop_nr +=
+        //             g_ctx.num_clients + 1;  // increment proposal number
+        //         continue;
+        //     }
 
-            write_min_proposal(g_ctx.buf.log);
-            // issue the next instruction without waiting for completions
+        //     write_min_proposal(g_ctx.buf.log);
+        //     // issue the next instruction without waiting for completions
 
-            // read slot at position "offset" from a majority of logs
-            copy_remote_logs(offset, SLOT, DEFAULT_VALUE_SIZE);
+        //     // read slot at position "offset" from a majority of logs
+        //     copy_remote_logs(offset, SLOT, DEFAULT_VALUE_SIZE);
 
-            // value with highest accepted proposal among those read
-            freshVal = freshest_accepted_value(offset);
-        }
+        //     // value with highest accepted proposal among those read
+        //     freshVal = freshest_accepted_value(offset);
+        // }
 
         if (freshVal != NULL && freshVal->len != 0) {
             // printf("Found accepted value: %lu\n", *(uint64_t*)freshVal->val);

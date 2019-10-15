@@ -154,7 +154,7 @@ void init_ctx_common(struct global_context *ctx, bool is_le) {
         memset(&qp_init_attr, 0, sizeof(qp_init_attr));
         qp_init_attr.send_cq = ctx->cq;
         qp_init_attr.recv_cq = ctx->cq;
-        qp_init_attr.qp_type = IBV_QPT_RC;
+        qp_init_attr.qp_type = IBV_QPT_UC;
         qp_init_attr.cap.max_send_wr = MAX_SEND_WR;
         qp_init_attr.cap.max_recv_wr = MAX_RECV_WR;
         qp_init_attr.cap.max_send_sge = MAX_SEND_SGE;

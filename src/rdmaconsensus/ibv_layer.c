@@ -147,9 +147,14 @@ int qp_change_state_rtr(struct qp_context *qpc) {
     attr.ah_attr.port_num = IB_PORT;
 
     TEST_NZ(ibv_modify_qp(qpc->qp, &attr,
-                          IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU |
-                              IBV_QP_DEST_QPN | IBV_QP_RQ_PSN |
-                              IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER),
+                          IBV_QP_STATE 
+                          | IBV_QP_AV 
+                          | IBV_QP_PATH_MTU 
+                          | IBV_QP_DEST_QPN 
+                          | IBV_QP_RQ_PSN 
+                          | IBV_QP_MAX_DEST_RD_ATOMIC 
+                          | IBV_QP_MIN_RNR_TIMER
+                          ),
             "Could not modify QP to RTR state");
 
     return 0;
@@ -175,9 +180,13 @@ int qp_change_state_rts(struct qp_context *qpc) {
     attr.max_rd_atomic = MAX_RD_ATOMIC;
 
     TEST_NZ(ibv_modify_qp(qpc->qp, &attr,
-                          IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT |
-                              IBV_QP_RNR_RETRY | IBV_QP_SQ_PSN |
-                              IBV_QP_MAX_QP_RD_ATOMIC),
+                          IBV_QP_STATE 
+                          | IBV_QP_TIMEOUT 
+                          | IBV_QP_RETRY_CNT 
+                          | IBV_QP_RNR_RETRY 
+                          | IBV_QP_SQ_PSN 
+                          | IBV_QP_MAX_QP_RD_ATOMIC
+                          ),
             "Could not modify QP to RTS state");
 
     return 0;
