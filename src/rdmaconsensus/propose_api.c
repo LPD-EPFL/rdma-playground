@@ -64,9 +64,9 @@ void consensus_setup() {
     printf("Consensus thread connections:\n");
     for (int i = 0; i < g_ctx.num_clients; ++i) {
         print_ib_connection("Local  Connection",
-                            &g_ctx.qps[i].local_connection);
+                            &g_ctx.qps[i].rc_local_connection);
         print_ib_connection("Remote Connection",
-                            &g_ctx.qps[i].remote_connection);
+                            &g_ctx.qps[i].rc_remote_connection);
     }
 
     for (int i = 0; i < g_ctx.num_clients; ++i) {

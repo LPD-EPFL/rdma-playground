@@ -136,10 +136,10 @@ int update_followers() {
                    g_ctx.qps[i].buf_copy.log->firstUndecidedOffset;
         remote_addr = log_get_remote_address(
             g_ctx.buf.log, local_address,
-            (log_t *)g_ctx.qps[i].remote_connection.vaddr);
-        post_send(g_ctx.qps[i].qp, local_address, req_size,
+            (log_t *)g_ctx.qps[i].rc_remote_connection.vaddr);
+        post_send(g_ctx.qps[i].rc_qp, local_address, req_size,
                   g_ctx.qps[i].mr_write->lkey,
-                  g_ctx.qps[i].remote_connection.rkey, remote_addr,
+                  g_ctx.qps[i].rc_remote_connection.rkey, remote_addr,
                   IBV_WR_RDMA_WRITE, wrid, false);
 
         //  update remote firstUndecidedOffset
@@ -147,10 +147,10 @@ int update_followers() {
         req_size = sizeof(g_ctx.buf.log->firstUndecidedOffset);
         remote_addr = log_get_remote_address(
             g_ctx.buf.log, local_address,
-            (log_t *)g_ctx.qps[i].remote_connection.vaddr);
-        post_send(g_ctx.qps[i].qp, local_address, req_size,
+            (log_t *)g_ctx.qps[i].rc_remote_connection.vaddr);
+        post_send(g_ctx.qps[i].rc_qp, local_address, req_size,
                   g_ctx.qps[i].mr_write->lkey,
-                  g_ctx.qps[i].remote_connection.rkey, remote_addr,
+                  g_ctx.qps[i].rc_remote_connection.rkey, remote_addr,
                   IBV_WR_RDMA_WRITE, wrid, true);
     }
 
@@ -250,10 +250,10 @@ void copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size) {
         WRID_SET_CONN(wrid, i);
         remote_addr = log_get_remote_address(
             g_ctx.qps[i].buf_copy.log, local_address,
-            (log_t *)g_ctx.qps[i].remote_connection.vaddr);
-        post_send(g_ctx.qps[i].qp, local_address, req_size,
+            (log_t *)g_ctx.qps[i].rc_remote_connection.vaddr);
+        post_send(g_ctx.qps[i].rc_qp, local_address, req_size,
                   g_ctx.qps[i].mr_read->lkey,
-                  g_ctx.qps[i].remote_connection.rkey, remote_addr,
+                  g_ctx.qps[i].rc_remote_connection.rkey, remote_addr,
                   IBV_WR_RDMA_READ, wrid, true);
     }
 
@@ -296,10 +296,10 @@ void copy_remote_logs(uint64_t offset, write_location_t type, uint64_t size) {
                     WRID_SET_CONN(wrid, i);
                     remote_addr = log_get_remote_address(
                         g_ctx.qps[i].buf_copy.log, local_address,
-                        (log_t *)g_ctx.qps[i].remote_connection.vaddr);
-                    post_send(g_ctx.qps[i].qp, local_address, req_size,
+                        (log_t *)g_ctx.qps[i].rc_remote_connection.vaddr);
+                    post_send(g_ctx.qps[i].rc_qp, local_address, req_size,
                               g_ctx.qps[i].mr_read->lkey,
-                              g_ctx.qps[i].remote_connection.rkey, remote_addr,
+                              g_ctx.qps[i].rc_remote_connection.rkey, remote_addr,
                               IBV_WR_RDMA_READ, wrid, true);
                 }
             }
@@ -331,10 +331,10 @@ void rdma_write_to_all(log_t *log, uint64_t offset, write_location_t type,
         WRID_SET_CONN(wrid, i);
         remote_addr = log_get_remote_address(
             log, local_address,
-            ((log_t *)g_ctx.qps[i].remote_connection.vaddr));
-        post_send(g_ctx.qps[i].qp, local_address, req_size,
+            ((log_t *)g_ctx.qps[i].uc_remote_connection.vaddr));
+        post_send(g_ctx.qps[i].uc_qp, local_address, req_size,
                   g_ctx.qps[i].mr_write->lkey,
-                  g_ctx.qps[i].remote_connection.rkey, remote_addr,
+                  g_ctx.qps[i].uc_remote_connection.rkey, remote_addr,
                   IBV_WR_RDMA_WRITE, wrid, signaled);
     }
 }

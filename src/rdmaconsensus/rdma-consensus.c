@@ -362,16 +362,34 @@ void init_ctx_common(struct global_context *ctx, bool is_le) {
         qp_init_attr.cap.max_recv_sge = MAX_RECV_SGE;
         qp_init_attr.cap.max_inline_data = MAX_INLINE_DATA;
 
-        TEST_Z(ctx->qps[i].qp = ibv_create_qp(ctx->pd, &qp_init_attr),
+        TEST_Z(ctx->qps[i].rc_qp = ibv_create_qp(ctx->pd, &qp_init_attr),
                "Could not create queue pair, ibv_create_qp");
 
         qp_change_state_init(&ctx->qps[i]);
+
+        if (!is_le) { // also initialize the UC QP
+            memset(&qp_init_attr, 0, sizeof(qp_init_attr));
+            qp_init_attr.send_cq = ctx->cq;
+            qp_init_attr.recv_cq = ctx->cq;
+            qp_init_attr.qp_type = IBV_QPT_UC;
+            qp_init_attr.cap.max_send_wr = MAX_SEND_WR;
+            qp_init_attr.cap.max_recv_wr = MAX_RECV_WR;
+            qp_init_attr.cap.max_send_sge = MAX_SEND_SGE;
+            qp_init_attr.cap.max_recv_sge = MAX_RECV_SGE;
+            qp_init_attr.cap.max_inline_data = MAX_INLINE_DATA;
+
+            TEST_Z(ctx->qps[i].uc_qp = ibv_create_qp(ctx->pd, &qp_init_attr),
+                   "Could not create queue pair, ibv_create_qp");
+
+            qp_change_state_init(&ctx->qps[i]);
+        }
     }
 }
 
 void destroy_ctx(struct global_context *ctx, bool is_le) {
     for (int i = 0; i < ctx->num_clients; i++) {
-        rc_qp_destroy(ctx->qps[i].qp, ctx->cq);
+        rc_qp_destroy(ctx->qps[i].rc_qp, ctx->cq);
+        rc_qp_destroy(ctx->qps[i].uc_qp, ctx->cq);
     }
 
     TEST_NZ(ibv_destroy_cq(ctx->cq),

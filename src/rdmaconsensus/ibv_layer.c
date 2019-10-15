@@ -21,14 +21,20 @@ void set_local_ib_connection(struct global_context *ctx, bool is_le) {
             "Could not get port attributes, ibv_query_port");
 
     for (int i = 0; i < ctx->num_clients; ++i) {
-        ctx->qps[i].local_connection.qpn = ctx->qps[i].qp->qp_num;
-        ctx->qps[i].local_connection.rkey = ctx->qps[i].mr_write->rkey;
-        ctx->qps[i].local_connection.lid = attr.lid;
-        ctx->qps[i].local_connection.psn = lrand48() & 0xffffff;
+        ctx->qps[i].rc_local_connection.qpn = ctx->qps[i].rc_qp->qp_num;
+        ctx->qps[i].rc_local_connection.rkey = ctx->qps[i].mr_write->rkey;
+        ctx->qps[i].rc_local_connection.lid = attr.lid;
+        ctx->qps[i].rc_local_connection.psn = lrand48() & 0xffffff;
         if (is_le) {
-            ctx->qps[i].local_connection.vaddr = (uintptr_t)ctx->buf.le_data;
+            ctx->qps[i].rc_local_connection.vaddr = (uintptr_t)ctx->buf.le_data;
         } else {
-            ctx->qps[i].local_connection.vaddr = (uintptr_t)ctx->buf.log;
+            ctx->qps[i].rc_local_connection.vaddr = (uintptr_t)ctx->buf.log;
+
+            ctx->qps[i].uc_local_connection.qpn = ctx->qps[i].uc_qp->qp_num;
+            ctx->qps[i].uc_local_connection.rkey = ctx->qps[i].mr_write->rkey;
+            ctx->qps[i].uc_local_connection.lid = attr.lid;
+            ctx->qps[i].uc_local_connection.psn = lrand48() & 0xffffff;
+            ctx->qps[i].uc_local_connection.vaddr = (uintptr_t)ctx->buf.log;
         }
     }
 }
@@ -50,12 +56,21 @@ void exchange_ib_connection_info(struct global_context *ctx,
             continue;
         }
 
-        struct ib_connection *local = &ctx->qps[j].local_connection;
+        struct ib_connection *local = &ctx->qps[j].rc_local_connection;
         sprintf(msg, "%04x:%06x:%06x:%08x:%016Lx", local->lid, local->qpn,
                 local->psn, local->rkey, local->vaddr);
 
         sprintf(key, "dory-%s-rc-qp-%d-%d", suffix, ctx->my_index, i);
         dory_registry_publish(ctx->registry, key, msg, sizeof(msg));
+
+        if (ctx->qps[j].uc_qp != NULL) {
+            local = &ctx->qps[j].uc_local_connection;
+            sprintf(msg, "%04x:%06x:%06x:%08x:%016Lx", local->lid, local->qpn,
+                    local->psn, local->rkey, local->vaddr);
+
+            sprintf(key, "dory-%s-uc-qp-%d-%d", suffix, ctx->my_index, i);
+            dory_registry_publish(ctx->registry, key, msg, sizeof(msg));            
+        }
 
         j++;
     }
@@ -78,10 +93,24 @@ void exchange_ib_connection_info(struct global_context *ctx,
             dory_registry_get_published(ctx->registry, key, (void **)&msg);
         CPE(ret == -1, -1, "Could not get published key from registry");
 
-        struct ib_connection *remote = &ctx->qps[j].remote_connection;
+        struct ib_connection *remote = &ctx->qps[j].rc_remote_connection;
         int cnt = sscanf(msg, "%x:%x:%x:%x:%Lx", &remote->lid, &remote->qpn,
                          &remote->psn, &remote->rkey, &remote->vaddr);
         CPE(cnt != 5, -1, "Could not parse message from peer");
+
+        if (ctx->qps[j].uc_qp != NULL) {
+            sprintf(key, "dory-%s-uc-qp-%d-%d", suffix, i, ctx->my_index);
+            char *msg = NULL;
+            int ret =
+                dory_registry_get_published(ctx->registry, key, (void **)&msg);
+            CPE(ret == -1, -1, "Could not get published key from registry");
+
+            struct ib_connection *remote = &ctx->qps[j].uc_remote_connection;
+            int cnt = sscanf(msg, "%x:%x:%x:%x:%Lx", &remote->lid, &remote->qpn,
+                             &remote->psn, &remote->rkey, &remote->vaddr);
+            CPE(cnt != 5, -1, "Could not parse message from peer");          
+        }
+
         free(msg);
 
         j++;
@@ -97,8 +126,14 @@ int qp_change_state_reset(struct qp_context *qpc) {
     memset(&attr, 0, sizeof(attr));
     attr.qp_state = IBV_QPS_RESET;
 
-    TEST_NZ(ibv_modify_qp(qpc->qp, &attr, IBV_QP_STATE),
+    TEST_NZ(ibv_modify_qp(qpc->rc_qp, &attr, IBV_QP_STATE),
             "Could not modify QP to RESET, ibv_modify_qp");
+    if (qpc->uc_qp != NULL) {
+        memset(&attr, 0, sizeof(attr));
+        attr.qp_state = IBV_QPS_RESET;
+        TEST_NZ(ibv_modify_qp(qpc->uc_qp, &attr, IBV_QP_STATE),
+            "Could not modify QP to RESET, ibv_modify_qp");
+    }
 
     return 0;
 }
@@ -117,10 +152,24 @@ int qp_change_state_init(struct qp_context *qpc) {
     attr.port_num = IB_PORT;
     attr.qp_access_flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ;
 
-    TEST_NZ(ibv_modify_qp(qpc->qp, &attr,
+    TEST_NZ(ibv_modify_qp(qpc->rc_qp, &attr,
                           IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT |
                               IBV_QP_ACCESS_FLAGS),
             "Could not modify QP to INIT, ibv_modify_qp");
+
+    if (qpc->uc_qp != NULL) {
+        memset(&attr, 0, sizeof(attr));
+
+        attr.qp_state = IBV_QPS_INIT;
+        attr.pkey_index = PKEY_INDEX;
+        attr.port_num = IB_PORT;
+        attr.qp_access_flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ;
+
+        TEST_NZ(ibv_modify_qp(qpc->uc_qp, &attr,
+                              IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT |
+                                  IBV_QP_ACCESS_FLAGS),
+                "Could not modify QP to INIT, ibv_modify_qp");       
+    }
 
     return 0;
 }
@@ -136,21 +185,40 @@ int qp_change_state_rtr(struct qp_context *qpc) {
 
     attr.qp_state = IBV_QPS_RTR;
     attr.path_mtu = IBV_MTU_2048;
-    attr.dest_qp_num = qpc->remote_connection.qpn;
-    attr.rq_psn = qpc->remote_connection.psn;
+    attr.dest_qp_num = qpc->rc_remote_connection.qpn;
+    attr.rq_psn = qpc->rc_remote_connection.psn;
     attr.max_dest_rd_atomic = MAX_DEST_RD_ATOMIC;
     attr.min_rnr_timer = MIN_RNR_TIMER;
     attr.ah_attr.is_global = AH_ATTR_IS_GLOBAL;
-    attr.ah_attr.dlid = qpc->remote_connection.lid;
+    attr.ah_attr.dlid = qpc->rc_remote_connection.lid;
     attr.ah_attr.sl = AH_ATTR_SL;
     attr.ah_attr.src_path_bits = AH_ATTR_SRC_PATH_BITS;
     attr.ah_attr.port_num = IB_PORT;
 
-    TEST_NZ(ibv_modify_qp(qpc->qp, &attr,
+    TEST_NZ(ibv_modify_qp(qpc->rc_qp, &attr,
                           IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU |
                               IBV_QP_DEST_QPN | IBV_QP_RQ_PSN |
                               IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER),
             "Could not modify QP to RTR state");
+
+
+    if (qpc->uc_qp != NULL) {
+        memset(&attr, 0, sizeof(attr));
+        attr.qp_state = IBV_QPS_RTR;
+        attr.path_mtu = IBV_MTU_2048;
+        attr.dest_qp_num = qpc->uc_remote_connection.qpn;
+        attr.rq_psn = qpc->uc_remote_connection.psn;
+        attr.ah_attr.is_global = AH_ATTR_IS_GLOBAL;
+        attr.ah_attr.dlid = qpc->uc_remote_connection.lid;
+        attr.ah_attr.sl = AH_ATTR_SL;
+        attr.ah_attr.src_path_bits = AH_ATTR_SRC_PATH_BITS;
+        attr.ah_attr.port_num = IB_PORT;
+
+        TEST_NZ(ibv_modify_qp(qpc->uc_qp, &attr,
+                              IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU |
+                                  IBV_QP_DEST_QPN | IBV_QP_RQ_PSN),
+                "Could not modify QP to RTR state");
+    }
 
     return 0;
 }
@@ -171,14 +239,26 @@ int qp_change_state_rts(struct qp_context *qpc) {
     attr.timeout = TIMEOUT;
     attr.retry_cnt = RETRY_CNT;
     attr.rnr_retry = RNR_RETRY; /* infinite retry */
-    attr.sq_psn = qpc->local_connection.psn;
+    attr.sq_psn = qpc->rc_local_connection.psn;
     attr.max_rd_atomic = MAX_RD_ATOMIC;
 
-    TEST_NZ(ibv_modify_qp(qpc->qp, &attr,
+    TEST_NZ(ibv_modify_qp(qpc->rc_qp, &attr,
                           IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT |
                               IBV_QP_RNR_RETRY | IBV_QP_SQ_PSN |
                               IBV_QP_MAX_QP_RD_ATOMIC),
             "Could not modify QP to RTS state");
+
+    if (qpc->uc_qp != NULL) {
+        struct ibv_qp_attr attr;
+        memset(&attr, 0, sizeof attr);
+
+        attr.qp_state = IBV_QPS_RTS;
+        attr.sq_psn = qpc->uc_local_connection.psn;
+
+        TEST_NZ(ibv_modify_qp(qpc->uc_qp, &attr,
+                              IBV_QP_STATE |  IBV_QP_SQ_PSN ),
+                "Could not modify QP to RTS state");        
+    }
 
     return 0;
 }
@@ -225,12 +305,12 @@ void rc_qp_destroy(struct ibv_qp *qp, struct ibv_cq *cq) {
  * **********************
  *    Writes 'ctx-buf' into buffer of peer
  */
-void rdma_write(int id) {
-    post_send_inner(
-        g_ctx.qps[id].qp, g_ctx.buf.log, log_size(g_ctx.buf.log),
-        g_ctx.qps[id].mr_write->lkey, g_ctx.qps[id].remote_connection.rkey,
-        g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
-}
+// void rdma_write(int id) {
+//     post_send_inner(
+//         g_ctx.qps[id].qp, g_ctx.buf.log, log_size(g_ctx.buf.log),
+//         g_ctx.qps[id].mr_write->lkey, g_ctx.qps[id].remote_connection.rkey,
+//         g_ctx.qps[id].remote_connection.vaddr, IBV_WR_RDMA_WRITE, 42, true);
+// }
 
 /*
  *  rdma_read
