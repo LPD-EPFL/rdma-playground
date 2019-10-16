@@ -74,7 +74,7 @@ index 7f0acaa..42efc07 100644
      int j;
  
 +    // Added by SaGGy00
-+    consensus_setup();
++    consensus_setup(follower_nop_cb, NULL);
 +    consensus_start_leader_election();
 +
  #ifdef REDIS_TEST
