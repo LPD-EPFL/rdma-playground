@@ -28,12 +28,11 @@ extern "C" {
 
 #include "constants.h"
 #include "registry.h"
+#include "propose_api.h"
 
 #define UNUSED(x) (void)x;
 
 typedef enum {SLOT, MIN_PROPOSAL} write_location_t;
-
-
 
 // if x is NON-ZERO, error is printed
 #define TEST_NZ(x,y) do { if ((x)) die(y); } while (0)
@@ -136,6 +135,8 @@ struct global_context {
     uint64_t                    *completed_ops;
 
     struct dory_registry *registry;
+    void *follower_cb_data;
+    follower_cb_t follower_cb;
 };
 
 static void

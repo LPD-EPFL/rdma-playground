@@ -18,12 +18,14 @@ extern struct global_context g_ctx;
 extern struct global_context le_ctx;
 // extern volatile bool stop_le;
 
-void consensus_setup() {
+void consensus_setup(follower_cb_t follower_cb, void *follower_cb_data) {
     set_cpu(MAIN_THREAD_CPU);
     printf("Setup\n");
     pid = getpid();
 
     g_ctx = create_ctx();
+    g_ctx.follower_cb_data = follower_cb_data;
+    g_ctx.follower_cb = follower_cb;
 
     assert(pid);
     assert(g_ctx.len == (uint64_t)0);
@@ -102,6 +104,19 @@ void consensus_propose_test1() {
     } else {
         sleep(1);
         log_print(g_ctx.buf.log);
+    }
+
+    stop_leader_election();
+    shutdown_leader_election_thread();
+}
+
+void consensus_propose_noop() {
+    uint64_t val;
+
+    start_leader_election();
+
+    while (true) {
+        sleep(600);
     }
 
     stop_leader_election();
