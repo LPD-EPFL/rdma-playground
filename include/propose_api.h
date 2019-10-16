@@ -4,7 +4,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
-void consensus_setup();
+typedef void (*follower_cb_t)(void *userdata, char *data, int data_len);
+
+static void follower_nop_cb(void *userdata, char *data, int data_len) {
+    (void)userdata;
+    (void)data;
+    (void)data_len;
+}
+
+void consensus_setup(follower_cb_t follower_cb, void *follower_cb_data);
+
+void consensus_propose_noop();
 void consensus_propose_test1();
 void consensus_propose_test2();
 void consensus_propose_test3();
