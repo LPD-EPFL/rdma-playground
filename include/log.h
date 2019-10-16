@@ -9,7 +9,7 @@ extern "C" {
 #include <sys/mman.h>
 
 #define DEFAULT_VALUE_SIZE 8  // value size if it is uint64_t
-#define DEFAULT_LOG_LENGTH (2ul * 1024 * 1024)
+#define DEFAULT_LOG_LENGTH (4ul * 1024 * 1024 * 1024)
 #define CACHE_LINE_SIZE 64
 
 struct value_t {
