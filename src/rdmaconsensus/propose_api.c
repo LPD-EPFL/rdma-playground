@@ -109,8 +109,6 @@ void consensus_propose_test1() {
 }
 
 void consensus_propose_noop() {
-    uint64_t val;
-
     start_leader_election();
 
     while (true) {
@@ -181,4 +179,45 @@ void consensus_propose_test3() {
 
     // stop_leader_election();
     // shutdown_leader_election_thread();
+}
+
+void consensus_propose_test_herd() {
+    // WARNING: Do not forget to increase the MAX_INLINE_DATA constant for
+    // best performance.
+    start_leader_election();
+
+    if (g_ctx.my_index == 0) {
+
+        // Warm-up
+        uint64_t val = 0xdeadbeef;
+        propose((uint8_t *)&val, sizeof(val));
+        sleep(5);
+
+        struct timeval start, end;
+        gettimeofday(&start, NULL);
+        uint8_t get[17];
+        uint8_t set[51];
+        for (int i = 0; i < TEST_SIZE; ++i) {
+            if (i % 2 == 0) {
+                propose(get, 17);
+            } else {
+                propose(set, 51);
+            }
+        }
+        gettimeofday(&end, NULL);
+        uint64_t duration = (end.tv_sec * 1000000 + end.tv_usec) -
+                            (start.tv_sec * 1000000 + start.tv_usec);
+        double avg_latency = (1.0 * duration) / TEST_SIZE;
+        printf("Average latency = %.2f\n", avg_latency);
+    } else {
+        sleep(30);
+        log_print(g_ctx.buf.log);
+    }
+
+    while (true) {
+        sleep(600);
+    }
+
+    stop_leader_election();
+    shutdown_leader_election_thread();
 }
