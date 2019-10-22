@@ -184,27 +184,32 @@ void consensus_propose_test3() {
     // shutdown_leader_election_thread();
 }
 
-<<<<<<< HEAD
 int cmp_func(const void *a, const void *b) {
     return (int) ( *(uint64_t*)a - *(uint64_t*)b ); // ascending
 }
 
-uint8_t data[1024];
-TIMESTAMP_T timestamps[MEDIAN_SAMPLE_SIZE+1];
-uint64_t elapsed_times[MEDIAN_SAMPLE_SIZE], elapsed_times_ordered[MEDIAN_SAMPLE_SIZE];
-
 void consensus_propose_leader_median() {
     TIMESTAMP_INIT
+
+    uint8_t *data = malloc(1024 * sizeof(*data));
+    assert(data);
+
+    TIMESTAMP_T *timestamps = malloc((MEDIAN_SAMPLE_SIZE+1) * sizeof(*timestamps));
+    assert(timestamps);
+
+    uint64_t *elapsed_times = malloc(MEDIAN_SAMPLE_SIZE * sizeof(*elapsed_times));
+    assert(data);
+
+    uint64_t *elapsed_times_ordered = malloc(MEDIAN_SAMPLE_SIZE * sizeof(*elapsed_times_ordered));
+    assert(data);
 
 
     printf("Sample size = %d\n", MEDIAN_SAMPLE_SIZE);
 
     start_leader_election();
-    uint64_t warmup;
-
-
 
     if (g_ctx.my_index == 0) {
+        // Warm-up
         propose(data, 8);
 
 
@@ -265,8 +270,12 @@ void consensus_propose_leader_median() {
 
     stop_leader_election();
     shutdown_leader_election_thread();
+
+    free(data);
+    free(timestamps);
+    free(elapsed_times);
+    free(elapsed_times_ordered);
 }
-=======
 void consensus_propose_test_herd() {
     // WARNING: Do not forget to increase the MAX_INLINE_DATA constant for
     // best performance.
@@ -307,4 +316,3 @@ void consensus_propose_test_herd() {
     stop_leader_election();
     shutdown_leader_election_thread();
 }
->>>>>>> Add raw test for HERD
