@@ -1,10 +1,12 @@
 #include <assert.h>
 #include <sys/time.h>
+#include <stdlib.h>
 #include "consensus-protocol.h"
 #include "leader-election.h"
 #include "parser.h"
 #include "rdma-consensus.h"
 #include "registry.h"
+#include "timers.h"
 
 static int page_size;
 static int sl = 1;
@@ -107,6 +109,7 @@ void consensus_propose_test1() {
 }
 
 void consensus_propose_test2() {
+    TIMESTAMP_INIT
     uint64_t val;
 
     start_leader_election();
@@ -114,15 +117,15 @@ void consensus_propose_test2() {
     if (g_ctx.my_index == 0) {
         propose((uint8_t *)&val, sizeof(val));
 
-        struct timeval start, end;
-        gettimeofday(&start, NULL);
+        TIMESTAMP_T start, end;
+        GET_TIMESTAMP(start);
         val = 42;
         for (int i = 0; i < TEST_SIZE; ++i) {
             propose((uint8_t *)&val, sizeof(val));
         }
-        gettimeofday(&end, NULL);
-        uint64_t duration = (end.tv_sec * 1000000 + end.tv_usec) -
-                            (start.tv_sec * 1000000 + start.tv_usec);
+        GET_TIMESTAMP(end);
+        uint64_t duration = ELAPSED_NSEC(start, end);
+
         double avg_latency = (1.0 * duration) / TEST_SIZE;
         printf("Average latency = %.2f\n", avg_latency);
     } else {
@@ -135,14 +138,15 @@ void consensus_propose_test2() {
 }
 
 void consensus_propose_test3() {
+    TIMESTAMP_INIT
     struct ibv_wc wc_array[g_ctx.num_clients];
-    struct timeval start, end;
+    TIMESTAMP_T start, end;
 
     if (g_ctx.my_index == 0) {
         bool signaled;
         signaled = true;
 
-        gettimeofday(&start, NULL);
+        GET_TIMESTAMP(start);
         for (int i = 0; i < TEST_SIZE; i++) {
             if (g_ctx.round_nb % 64 == 0) {
                 signaled = true;
@@ -155,9 +159,8 @@ void consensus_propose_test3() {
                            wc_array, g_ctx.completed_ops);
             }
         }
-        gettimeofday(&end, NULL);
-        uint64_t duration = (end.tv_sec * 1000000 + end.tv_usec) -
-                            (start.tv_sec * 1000000 + start.tv_usec);
+        GET_TIMESTAMP(start);
+        uint64_t duration = ELAPSED_NSEC(start, end);
         double avg_latency = (1.0 * duration) / TEST_SIZE;
         printf("Average latency = %.2f\n", avg_latency);
     } else {
@@ -166,4 +169,76 @@ void consensus_propose_test3() {
 
     // stop_leader_election();
     // shutdown_leader_election_thread();
+}
+
+int cmp_func(const void *a, const void *b) {
+    return (int) ( *(uint64_t*)a - *(uint64_t*)b ); // ascending
+}
+
+void consensus_propose_leader_median() {
+    TIMESTAMP_INIT
+    TIMESTAMP_T timestamps[MEDIAN_SAMPLE_SIZE+1];
+
+    uint64_t val;
+    printf("Sample size = %d\n", MEDIAN_SAMPLE_SIZE);
+
+    start_leader_election();
+
+    if (g_ctx.my_index == 0) {
+        propose((uint8_t *)&val, sizeof(val));
+
+        val = 42;
+        for (int i = 0; i < MEDIAN_SAMPLE_SIZE; ++i) {
+            GET_TIMESTAMP(timestamps[i]);
+            propose((uint8_t *)&val, sizeof(val));
+        }
+        GET_TIMESTAMP(timestamps[MEDIAN_SAMPLE_SIZE]);
+
+        // post-processing
+        uint64_t elapsed_times[MEDIAN_SAMPLE_SIZE], elapsed_times_ordered[MEDIAN_SAMPLE_SIZE];
+        for (int i = 0; i < MEDIAN_SAMPLE_SIZE; i++) {
+            elapsed_times[i] = ELAPSED_NSEC(timestamps[i], timestamps[i+1]);
+            elapsed_times_ordered[i] = elapsed_times[i];
+
+        }
+        qsort(elapsed_times_ordered, MEDIAN_SAMPLE_SIZE, sizeof(uint64_t), cmp_func);
+
+        uint64_t highest[3] = {elapsed_times_ordered[MEDIAN_SAMPLE_SIZE-3],
+                               elapsed_times_ordered[MEDIAN_SAMPLE_SIZE-2],
+                               elapsed_times_ordered[MEDIAN_SAMPLE_SIZE-1]};
+        uint64_t moments[3];
+        for (int i = 0; i < MEDIAN_SAMPLE_SIZE; i++) {
+            for (int j = 0; j < 3; j++) {
+                if (elapsed_times[i] == highest[j]) {
+                    moments[j] = i;
+                }
+            }
+        }
+
+        double average = 0;
+        for (int i = 0; i < MEDIAN_SAMPLE_SIZE; i++) {
+            average += (double) elapsed_times[i]/MEDIAN_SAMPLE_SIZE;
+        }
+        double median = elapsed_times_ordered[(int)(0.5 * MEDIAN_SAMPLE_SIZE)];
+        double percentile_98 = elapsed_times_ordered[(int)(0.98 * MEDIAN_SAMPLE_SIZE)];
+        double percentile_02 = elapsed_times_ordered[(int)(0.02 * MEDIAN_SAMPLE_SIZE)];
+
+        printf("Sample size = %d\n", MEDIAN_SAMPLE_SIZE);
+        printf("Average: %.2f\n", average);
+        printf("Min = %lu ns\n", elapsed_times_ordered[0]);
+        printf("02th percentile = %.2f ns\n", percentile_02);
+        printf("Median = %.2f ns\n", median);
+        printf("98th percentile = %.2f ns\n", percentile_98);
+        printf("TOP 3 = %luth proposal - %lu ns, %luth proposal - %lu ns, %luth proposal - %lu ns\n",
+                moments[0]+1, elapsed_times_ordered[MEDIAN_SAMPLE_SIZE-3],
+                moments[1]+1, elapsed_times_ordered[MEDIAN_SAMPLE_SIZE-2],
+                moments[2]+1, elapsed_times_ordered[MEDIAN_SAMPLE_SIZE-1]);
+
+    } else {
+        sleep(5);
+        log_print(g_ctx.buf.log);
+    }
+
+    stop_leader_election();
+    shutdown_leader_election_thread();
 }

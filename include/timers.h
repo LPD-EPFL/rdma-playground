@@ -1,8 +1,8 @@
 #ifndef TIMERS_H_
 #define TIMERS_H_
 
-#include <cinttypes>
-#include <ctime>
+#include <inttypes.h>
+#include <time.h>
 
 /*
 USAGE:
@@ -59,7 +59,7 @@ typedef struct {
 /* global timer frequency in Hz */
 unsigned long long g_timerfreq;
 
-#define HRT_CALIBRATE                                                   \
+#define HRT_INIT                                                   \
     do {                                                                \
         static volatile HRT_TIMESTAMP_T t1, t2;                         \
         static volatile UINT64_T elapsed_ticks, min = (UINT64_T)(~0x1); \
@@ -79,8 +79,6 @@ unsigned long long g_timerfreq;
         g_timerfreq = min;                                              \
         printf("freq %llu\n", g_timerfreq);                             \
     } while (0);
-
-#define HRT_INIT HRT_CALIBRATE
 
 #define HRT_GET_TIME(t1, time) time = ((((UINT64_T)t1.h) << 32) | t1.l)
 

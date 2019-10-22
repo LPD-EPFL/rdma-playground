@@ -5,7 +5,8 @@
 
 int main() {
     consensus_setup();
-    consensus_propose_test2();
+//    consensus_propose_test2();
+    consensus_propose_leader_median();
     getchar();
     consensus_shutdown();
 

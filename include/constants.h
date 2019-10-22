@@ -31,6 +31,7 @@
 #define PERM_THREAD_CPU 4
 
 #define TEST_SIZE 10000
+#define MEDIAN_SAMPLE_SIZE 29999 // increase log length to e.g. 10MB to test with more
 
 #define CONFIG_FILE_NAME "./config"
 
