@@ -159,7 +159,7 @@ void consensus_propose_test3() {
                            wc_array, g_ctx.completed_ops);
             }
         }
-        GET_TIMESTAMP(start);
+        GET_TIMESTAMP(end);
         uint64_t duration = ELAPSED_NSEC(start, end);
         double avg_latency = (1.0 * duration) / TEST_SIZE;
         printf("Average latency = %.2f\n", avg_latency);
