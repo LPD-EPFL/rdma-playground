@@ -1,53 +1,5 @@
-diff --git a/src/Makefile b/src/Makefile
-index 2a68649..1e6e0b6 100644
---- a/src/Makefile
-+++ b/src/Makefile
-@@ -145,6 +145,9 @@ ifeq ($(MALLOC),jemalloc)
- 	FINAL_LIBS := ../deps/jemalloc/lib/libjemalloc.a $(FINAL_LIBS)
- endif
- 
-+FINAL_LIBS += -libverbs -lmemcached -lrdmaconsensus -lnuma -pthread
-+
-+
- REDIS_CC=$(QUIET_CC)$(CC) $(FINAL_CFLAGS)
- REDIS_LD=$(QUIET_LINK)$(CC) $(FINAL_LDFLAGS)
- REDIS_INSTALL=$(QUIET_INSTALL)$(INSTALL)
-diff --git a/src/networking.c b/src/networking.c
-index 81c0325..494cb1b 100644
---- a/src/networking.c
-+++ b/src/networking.c
-@@ -34,6 +34,8 @@
- #include <math.h>
- #include <ctype.h>
- 
-+#include <propose_api.h>
-+
- static void setProtocolError(const char *errstr, client *c);
- 
- /* Return the size consumed from the allocator, for the specified SDS string,
-@@ -629,7 +631,7 @@ void addReplySubcommandSyntaxError(client *c) {
-     sdsfree(cmd);
- }
- 
--/* Append 'src' client output buffers into 'dst' client output buffers. 
-+/* Append 'src' client output buffers into 'dst' client output buffers.
-  * This function clears the output buffers of 'src' */
- void AddReplyFromClient(client *dst, client *src) {
-     if (prepareClientToWrite(dst) != C_OK)
-@@ -1424,6 +1426,9 @@ int processMultibulkBuffer(client *c) {
- void processInputBuffer(client *c) {
-     server.current_client = c;
- 
-+    // Added by SaGGy00
-+    consensus_propose((uint8_t *) c->querybuf, sdslen(c->querybuf));
-+
-     /* Keep processing while there is something in the input buffer */
-     while(c->qb_pos < sdslen(c->querybuf)) {
-         /* Return if clients are paused. */
-diff --git a/src/server.c b/src/server.c
-index 7f0acaa..42efc07 100644
---- a/src/server.c
-+++ b/src/server.c
+--- a/src/server.c	2019-05-15 18:07:37.000000000 +0200
++++ b/src/server.c	2019-10-22 16:49:33.880853000 +0200
 @@ -56,6 +56,9 @@
  #include <locale.h>
  #include <sys/socket.h>
@@ -58,7 +10,7 @@ index 7f0acaa..42efc07 100644
  /* Our shared "common" objects */
  
  struct sharedObjectsStruct shared;
-@@ -2761,6 +2764,10 @@ int prepareForShutdown(int flags) {
+@@ -2761,6 +2764,10 @@
  
      serverLog(LL_WARNING,"User requested shutdown...");
  
@@ -69,14 +21,173 @@ index 7f0acaa..42efc07 100644
      /* Kill all the Lua debugger forked sessions. */
      ldbKillForkedSessions();
  
-@@ -4009,6 +4016,10 @@ int main(int argc, char **argv) {
+@@ -4004,11 +4011,127 @@
+     return 0;
+ }
+ 
++int  dummy_client_sockfd = -1;
++// pthread_mutex_t dummy_client_mutex = PTHREAD_MUTEX_INITIALIZER;
++// pthread_cond_t dummy_client_cond = PTHREAD_COND_INITIALIZER;
++
++void drain_dummy_client(int fd) {
++    char tmp[1024];
++    printf("Reading pump started\n");
++
++    while (true) {
++        int ret = read(fd, tmp, 1024);
++        if (ret == -1) {
++            perror("read");
++        }
++
++        // tmp[ret] = 0;
++        // printf("%s", tmp);
++    }
++}
++
++void *dummy_client(void *arg) {
++    (void) arg;
++
++    fprintf(stderr, "Waiting 30s for redis to start...\n");
++    sleep(30);
++    fprintf(stderr, "We hope that redis started. We spawn the dummy client now...\n");
++    // Connect using tcp
++    int sockfd;
++    struct sockaddr_in servaddr;
++
++    // socket create and varification
++    sockfd = socket(AF_INET, SOCK_STREAM, 0);
++    if (sockfd == -1) {
++        printf("socket creation failed...\n");
++        exit(0);
++    }
++    else
++        printf("Socket successfully created..\n");
++    bzero(&servaddr, sizeof(servaddr));
++
++    // assign IP, PORT
++    servaddr.sin_family = AF_INET;
++    servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
++    servaddr.sin_port = htons(6379);
++
++    // connect the client socket to server socket
++    if (connect(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) != 0) {
++        printf("connection with the server failed...\n");
++        exit(0);
++    }
++    else
++        printf("connected to the server..\n");
++
++    // We're going to manipulate done and use the cond, so we need the mutex
++    // pthread_mutex_lock(&dummy_client_mutex);
++
++    // Increase the count of threads that have finished their work.
++    dummy_client_sockfd = sockfd;
++    printf( "[thread] dummy_client_sockfd is now %d.\n", dummy_client_sockfd);
++
++    __asm__ __volatile__ ("" : : :"memory");
++
++    // wait up the main thread (if it is sleeping) to test the value of done
++    // pthread_cond_signal(&dummy_client_cond);
++    // pthread_mutex_unlock(&dummy_client_mutex);
++
++    drain_dummy_client(sockfd);
++
++    return NULL;
++}
++
++void launch_dummy_thread() {
++	// Thread id
++	pthread_t threadId;
++
++	// Create a thread that will funtion threadFunc()
++	int err = pthread_create(&threadId, NULL, &dummy_client, NULL);
++
++    // Check if thread is created sucessfuly
++	if (err) {
++		fprintf(stderr, "Thread creation failed : %s\n", strerror(err));
++	}
++
++	err = pthread_detach(threadId);
++	if (err) {
++		fprintf(stderr, "Failed to detach Thread : %s\n", strerror(err));
++    }
++}
++
++void follower_cb(void *userdata, char *buf, int data_len) {
++    int fd = *(int *)userdata;
++
++    ssize_t bytes_written = write(fd, buf, data_len);
++    if (bytes_written == -1) {
++        perror("write");
++    }
++
++    while (bytes_written < data_len) {
++        ssize_t ret = write(fd, buf + bytes_written, data_len - bytes_written);
++        if (ret == -1) {
++            perror("write");
++        }
++
++        bytes_written += ret;
++    }
++}
+ 
+ int main(int argc, char **argv) {
      struct timeval tv;
      int j;
  
 +    // Added by SaGGy00
-+    consensus_setup(follower_nop_cb, NULL);
++    int is_leader = getenv("IS_LEADER") ? 1 : 0;
++
++    if (is_leader) {
++        consensus_setup(follower_nop_cb, NULL);
++    } else {
++        launch_dummy_thread();
++        consensus_setup(follower_cb, &dummy_client_sockfd);
++    }
 +    consensus_start_leader_election();
 +
  #ifdef REDIS_TEST
      if (argc == 3 && !strcasecmp(argv[1], "test")) {
          if (!strcasecmp(argv[2], "ziplist")) {
+--- a/src/networking.c	2019-05-15 18:07:37.000000000 +0200
++++ b/src/networking.c	2019-10-22 14:05:31.386624000 +0200
+@@ -34,6 +34,8 @@
+ #include <math.h>
+ #include <ctype.h>
+ 
++#include <propose_api.h>
++
+ static void setProtocolError(const char *errstr, client *c);
+ 
+ /* Return the size consumed from the allocator, for the specified SDS string,
+@@ -629,7 +631,7 @@
+     sdsfree(cmd);
+ }
+ 
+-/* Append 'src' client output buffers into 'dst' client output buffers. 
++/* Append 'src' client output buffers into 'dst' client output buffers.
+  * This function clears the output buffers of 'src' */
+ void AddReplyFromClient(client *dst, client *src) {
+     if (prepareClientToWrite(dst) != C_OK)
+@@ -1424,6 +1426,9 @@
+ void processInputBuffer(client *c) {
+     server.current_client = c;
+ 
++    // Added by SaGGy00
++    consensus_propose((uint8_t *) c->querybuf, sdslen(c->querybuf));
++
+     /* Keep processing while there is something in the input buffer */
+     while(c->qb_pos < sdslen(c->querybuf)) {
+         /* Return if clients are paused. */
+--- a/src/Makefile	2019-05-15 18:07:37.000000000 +0200
++++ b/src/Makefile	2019-10-22 14:05:31.367641000 +0200
+@@ -145,6 +145,9 @@
+ 	FINAL_LIBS := ../deps/jemalloc/lib/libjemalloc.a $(FINAL_LIBS)
+ endif
+ 
++FINAL_LIBS += -libverbs -lmemcached -lrdmaconsensus -lnuma -pthread
++
++
+ REDIS_CC=$(QUIET_CC)$(CC) $(FINAL_CFLAGS)
+ REDIS_LD=$(QUIET_LINK)$(CC) $(FINAL_LDFLAGS)
+ REDIS_INSTALL=$(QUIET_INSTALL)$(INSTALL)
