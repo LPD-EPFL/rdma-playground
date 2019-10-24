@@ -1,0 +1,244 @@
+--- original/memcached.c	2019-10-01 04:33:41.000000000 +0200
++++ memcached-1.5.19/memcached.c	2019-10-24 13:48:14.258557006 +0200
+@@ -53,6 +53,12 @@
+ #include <sysexits.h>
+ #include <stddef.h>
+ 
++
++/*
++* Added by lovitana
++*/
++#include <propose_api.h>
++
+ #ifdef HAVE_GETOPT_LONG
+ #include <getopt.h>
+ #endif
+@@ -3012,6 +3018,27 @@
+     item *new_it = NULL;
+     uint32_t flags;
+ 
++
++	/*
++	*ADDED BY lovitana
++	*/
++	
++	size_t q_size = it->nbytes + c->last_cmd_size + 2;
++	char* query = calloc(q_size + 1, sizeof(char));
++	char *tmp_ptr = query;
++	tmp_ptr += sprintf(query,"%s\r\n",c->last_cmd);
++	memcpy(tmp_ptr,ITEM_data(it),it->nbytes);
++	query[q_size] = '\0';
++	free(c->last_cmd);
++
++	consensus_propose((uint8_t*)query, q_size);
++
++
++	free(query);
++	/*
++	*END ADDITION
++	*/
++
+     if (old_it != NULL && comm == NREAD_ADD) {
+         /* add only adds a nonexistent item, but promote to head of LRU */
+         do_item_update(old_it);
+@@ -5755,6 +5782,16 @@
+ #endif
+ static void process_command(conn *c, char *command) {
+ 
++	/*
++	* ADDED by lovitana
++	*/
++	c->last_cmd_size = strlen(command)+1;
++	c->last_cmd = calloc(c->last_cmd_size,sizeof(char));
++	strcpy(c->last_cmd , command);
++	/*
++	*END
++	*/
++
+     token_t tokens[MAX_TOKENS];
+     size_t ntokens;
+     int comm;
+@@ -8238,8 +8275,150 @@
+     return reuse_mmap;
+ }
+ 
++
++/*
++*ADDED BY lovitana
++*/
++int  dummy_client_sockfd = -1;
++// pthread_mutex_t dummy_client_mutex = PTHREAD_MUTEX_INITIALIZER;
++// pthread_cond_t dummy_client_cond = PTHREAD_COND_INITIALIZER;
++
++void drain_dummy_client(int fd) {
++    char tmp[1024];
++    printf("Reading pump started\n");
++
++    while (true) {
++        int ret = read(fd, tmp, 1024);
++        if (ret == -1) {
++            perror("read");
++        }
++
++        // tmp[ret] = 0;
++        // printf("%s", tmp);
++    }
++}
++
++void *dummy_client(void *arg) {
++    (void) arg;
++
++    fprintf(stderr, "Waiting 30s for redis to start...\n");
++    sleep(30);
++    fprintf(stderr, "We hope that redis started. We spawn the dummy client now...\n");
++    // Connect using tcp
++    int sockfd;
++    struct sockaddr_in servaddr;
++
++    // socket create and varification
++    sockfd = socket(AF_INET, SOCK_STREAM, 0);
++    if (sockfd == -1) {
++        printf("socket creation failed...\n");
++        exit(0);
++    }
++    else
++        printf("Socket successfully created..\n");
++    bzero(&servaddr, sizeof(servaddr));
++
++    // assign IP, PORT
++    servaddr.sin_family = AF_INET;
++    servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
++    servaddr.sin_port = htons(11222);
++
++    // connect the client socket to server socket
++    if (connect(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) != 0) {
++        printf("connection with the server failed...\n");
++        exit(0);
++    }
++    else
++        printf("connected to the server..\n");
++
++    // We're going to manipulate done and use the cond, so we need the mutex
++    // pthread_mutex_lock(&dummy_client_mutex);
++
++    // Increase the count of threads that have finished their work.
++    dummy_client_sockfd = sockfd;
++    printf( "[thread] dummy_client_sockfd is now %d.\n", dummy_client_sockfd);
++
++    __asm__ __volatile__ ("" : : :"memory");
++
++    // wait up the main thread (if it is sleeping) to test the value of done
++    // pthread_cond_signal(&dummy_client_cond);
++    // pthread_mutex_unlock(&dummy_client_mutex);
++
++    drain_dummy_client(sockfd);
++
++    return NULL;
++}
++
++void launch_dummy_thread() {
++	// Thread id
++	pthread_t threadId;
++
++	// Create a thread that will funtion threadFunc()
++	int err = pthread_create(&threadId, NULL, &dummy_client, NULL);
++
++    // Check if thread is created sucessfuly
++	if (err) {
++		fprintf(stderr, "Thread creation failed : %s\n", strerror(err));
++	}
++
++	err = pthread_detach(threadId);
++	if (err) {
++		fprintf(stderr, "Failed to detach Thread : %s\n", strerror(err));
++    }
++}
++
++void follower_cb(void *userdata, char *buf, int data_len) {
++    int fd = *(int *)userdata;
++
++    ssize_t bytes_written = write(fd, buf, data_len);
++    if (bytes_written == -1) {
++        perror("write");
++    }
++
++    while (bytes_written < data_len) {
++        ssize_t ret = write(fd, buf + bytes_written, data_len - bytes_written);
++        if (ret == -1) {
++            perror("write");
++        }
++
++        bytes_written += ret;
++    }
++}
++
++/*
++* END
++*/
++
++
++
+ int main (int argc, char **argv) {
+-    int c;
++    /*
++	* ADDED BY lovitana
++	*/
++	int is_leader = getenv("IS_LEADER") ? 1 : 0;
++
++    if (is_leader) {
++        consensus_setup(follower_nop_cb, NULL);
++    } else {
++        launch_dummy_thread();
++        consensus_setup(follower_cb, &dummy_client_sockfd);
++    }
++    consensus_start_leader_election();
++	
++	/*
++	* END
++	*/
++	
++	
++	
++	
++	
++	
++	
++	
++	
++	
++	int c;
+     bool lock_memory = false;
+     bool do_daemonize = false;
+     bool preallocate = false;
+@@ -9769,6 +9948,14 @@
+     }
+ 
+     fprintf(stderr, "Gracefully stopping\n");
++	/*
++	*ADDED BY lovitana
++	*/
++    consensus_stop_leader_election();
++    consensus_shutdown();
++	/*
++	* END
++	*/
+     stop_threads();
+     int i;
+     // FIXME: make a function callable from threads.c
+diff -u original/memcached.h memcached-1.5.19/memcached.h
+--- original/memcached.h	2019-10-01 04:33:41.000000000 +0200
++++ memcached-1.5.19/memcached.h	2019-10-24 13:49:53.932242685 +0200
+@@ -717,6 +717,13 @@
+     ssize_t (*read)(conn  *c, void *buf, size_t count);
+     ssize_t (*sendmsg)(conn *c, struct msghdr *msg, int flags);
+     ssize_t (*write)(conn *c, void *buf, size_t count);
++
++    /*
++	* ADDED BY lovitana
++	*/
++	char* last_cmd; //contains the last commands buffer
++	size_t last_cmd_size;
++
+ };
+ 
+ /* array of conn structures, indexed by file descriptor */
