@@ -198,10 +198,10 @@ void consensus_propose_leader_median() {
     assert(timestamps);
 
     uint64_t *elapsed_times = malloc(MEDIAN_SAMPLE_SIZE * sizeof(*elapsed_times));
-    assert(data);
+    assert(elapsed_times);
 
     uint64_t *elapsed_times_ordered = malloc(MEDIAN_SAMPLE_SIZE * sizeof(*elapsed_times_ordered));
-    assert(data);
+    assert(elapsed_times_ordered);
 
 
     printf("Sample size = %d\n", MEDIAN_SAMPLE_SIZE);
