@@ -276,6 +276,7 @@ void consensus_propose_leader_median() {
     free(elapsed_times);
     free(elapsed_times_ordered);
 }
+
 void consensus_propose_test_herd() {
     // WARNING: Do not forget to increase the MAX_INLINE_DATA constant for
     // best performance.
