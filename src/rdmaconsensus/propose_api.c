@@ -175,67 +175,77 @@ int cmp_func(const void *a, const void *b) {
     return (int) ( *(uint64_t*)a - *(uint64_t*)b ); // ascending
 }
 
+uint8_t data[1024];
+TIMESTAMP_T timestamps[MEDIAN_SAMPLE_SIZE+1];
+uint64_t elapsed_times[MEDIAN_SAMPLE_SIZE], elapsed_times_ordered[MEDIAN_SAMPLE_SIZE];
+
 void consensus_propose_leader_median() {
     TIMESTAMP_INIT
-    TIMESTAMP_T timestamps[MEDIAN_SAMPLE_SIZE+1];
 
-    uint64_t val;
+
     printf("Sample size = %d\n", MEDIAN_SAMPLE_SIZE);
 
     start_leader_election();
+    uint64_t warmup;
+
+
 
     if (g_ctx.my_index == 0) {
-        propose((uint8_t *)&val, sizeof(val));
+        propose(data, 8);
 
-        val = 42;
-        for (int i = 0; i < MEDIAN_SAMPLE_SIZE; ++i) {
-            GET_TIMESTAMP(timestamps[i]);
-            propose((uint8_t *)&val, sizeof(val));
-        }
-        GET_TIMESTAMP(timestamps[MEDIAN_SAMPLE_SIZE]);
 
-        // post-processing
-        uint64_t elapsed_times[MEDIAN_SAMPLE_SIZE], elapsed_times_ordered[MEDIAN_SAMPLE_SIZE];
-        for (int i = 0; i < MEDIAN_SAMPLE_SIZE; i++) {
-            elapsed_times[i] = ELAPSED_NSEC(timestamps[i], timestamps[i+1]);
-            elapsed_times_ordered[i] = elapsed_times[i];
+        for (int sz = 128; sz < 1024; sz += 128) {
+            for (int i = 0; i < MEDIAN_SAMPLE_SIZE; ++i) {
+                GET_TIMESTAMP(timestamps[i]);
+                propose(data, sz);
+                // printf("Proposed %d\n", i);
+            }
+            GET_TIMESTAMP(timestamps[MEDIAN_SAMPLE_SIZE]);
 
-        }
-        qsort(elapsed_times_ordered, MEDIAN_SAMPLE_SIZE, sizeof(uint64_t), cmp_func);
+            // post-processing
 
-        uint64_t highest[3] = {elapsed_times_ordered[MEDIAN_SAMPLE_SIZE-3],
-                               elapsed_times_ordered[MEDIAN_SAMPLE_SIZE-2],
-                               elapsed_times_ordered[MEDIAN_SAMPLE_SIZE-1]};
-        uint64_t moments[3];
-        for (int i = 0; i < MEDIAN_SAMPLE_SIZE; i++) {
-            for (int j = 0; j < 3; j++) {
-                if (elapsed_times[i] == highest[j]) {
-                    moments[j] = i;
+            for (int i = 0; i < MEDIAN_SAMPLE_SIZE; i++) {
+                elapsed_times[i] = ELAPSED_NSEC(timestamps[i], timestamps[i+1]);
+                elapsed_times_ordered[i] = elapsed_times[i];
+
+            }
+            qsort(elapsed_times_ordered, MEDIAN_SAMPLE_SIZE, sizeof(uint64_t), cmp_func);
+
+            uint64_t highest[3] = {elapsed_times_ordered[MEDIAN_SAMPLE_SIZE-3],
+                                elapsed_times_ordered[MEDIAN_SAMPLE_SIZE-2],
+                                elapsed_times_ordered[MEDIAN_SAMPLE_SIZE-1]};
+            uint64_t moments[3];
+            for (int i = 0; i < MEDIAN_SAMPLE_SIZE; i++) {
+                for (int j = 0; j < 3; j++) {
+                    if (elapsed_times[i] == highest[j]) {
+                        moments[j] = i;
+                    }
                 }
             }
-        }
 
-        double average = 0;
-        for (int i = 0; i < MEDIAN_SAMPLE_SIZE; i++) {
-            average += (double) elapsed_times[i]/MEDIAN_SAMPLE_SIZE;
-        }
-        double median = elapsed_times_ordered[(int)(0.5 * MEDIAN_SAMPLE_SIZE)];
-        double percentile_98 = elapsed_times_ordered[(int)(0.98 * MEDIAN_SAMPLE_SIZE)];
-        double percentile_02 = elapsed_times_ordered[(int)(0.02 * MEDIAN_SAMPLE_SIZE)];
+            double average = 0;
+            for (int i = 0; i < MEDIAN_SAMPLE_SIZE; i++) {
+                average += (double) elapsed_times[i]/MEDIAN_SAMPLE_SIZE;
+            }
+            double median = elapsed_times_ordered[(int)(0.5 * MEDIAN_SAMPLE_SIZE)];
+            double percentile_98 = elapsed_times_ordered[(int)(0.98 * MEDIAN_SAMPLE_SIZE)];
+            double percentile_02 = elapsed_times_ordered[(int)(0.02 * MEDIAN_SAMPLE_SIZE)];
 
-        printf("Sample size = %d\n", MEDIAN_SAMPLE_SIZE);
-        printf("Average: %.2f\n", average);
-        printf("Min = %lu ns\n", elapsed_times_ordered[0]);
-        printf("02th percentile = %.2f ns\n", percentile_02);
-        printf("Median = %.2f ns\n", median);
-        printf("98th percentile = %.2f ns\n", percentile_98);
-        printf("TOP 3 = %luth proposal - %lu ns, %luth proposal - %lu ns, %luth proposal - %lu ns\n",
-                moments[0]+1, elapsed_times_ordered[MEDIAN_SAMPLE_SIZE-3],
-                moments[1]+1, elapsed_times_ordered[MEDIAN_SAMPLE_SIZE-2],
-                moments[2]+1, elapsed_times_ordered[MEDIAN_SAMPLE_SIZE-1]);
+            printf("Sample size = %d\n", MEDIAN_SAMPLE_SIZE);
+            printf("Average: %.2f\n", average);
+            printf("Min = %lu ns\n", elapsed_times_ordered[0]);
+            printf("02th percentile = %.2f ns\n", percentile_02);
+            printf("Median = %.2f ns\n", median);
+            printf("98th percentile = %.2f ns\n", percentile_98);
+            printf("TOP 3 = %luth proposal - %lu ns, %luth proposal - %lu ns, %luth proposal - %lu ns\n",
+                    moments[0]+1, elapsed_times_ordered[MEDIAN_SAMPLE_SIZE-3],
+                    moments[1]+1, elapsed_times_ordered[MEDIAN_SAMPLE_SIZE-2],
+                    moments[2]+1, elapsed_times_ordered[MEDIAN_SAMPLE_SIZE-1]);
+            printf("\n");
+        }
 
     } else {
-        sleep(5);
+        sleep(60);
         log_print(g_ctx.buf.log);
     }
 
