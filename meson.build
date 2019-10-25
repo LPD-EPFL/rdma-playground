@@ -29,6 +29,12 @@ executable('propose-test',
     link_with : rdmaconsensus_lib
 )
 
+executable('redis-latency-test',
+    redis_latency_test_sources,
+    include_directories : inc,
+    dependencies : [dependency('threads')]
+)
+
 # executable('tests-c',
 #     tests_c_sources,
 #     include_directories : inc,
