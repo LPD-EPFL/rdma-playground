@@ -12,7 +12,7 @@
 #define MAX_RECV_WR 1
 #define MAX_SEND_SGE 1
 #define MAX_RECV_SGE 1
-#define MAX_INLINE_DATA 32
+#define MAX_INLINE_DATA 256
 #define PKEY_INDEX 0
 #define MAX_DEST_RD_ATOMIC 1
 #define MIN_RNR_TIMER 12
