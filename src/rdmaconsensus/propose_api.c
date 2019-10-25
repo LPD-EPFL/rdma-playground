@@ -18,9 +18,52 @@ extern struct global_context g_ctx;
 extern struct global_context le_ctx;
 // extern volatile bool stop_le;
 
+void ibv_devinfo(void) {
+  int num_devices = 0, dev_i;
+  struct ibv_device** dev_list;
+  struct ibv_context* ctx;
+  struct ibv_device_attr device_attr;
+
+  printf("HRD: printing IB dev info\n");
+
+  dev_list = ibv_get_device_list(&num_devices);
+  if(!dev_list) printf("Failed to get IB devices list");
+
+  for (dev_i = 0; dev_i < num_devices; dev_i++) {
+    ctx = ibv_open_device(dev_list[dev_i]);
+    if (!ctx) printf("Couldn't get context");
+
+    memset(&device_attr, 0, sizeof(device_attr));
+    if (ibv_query_device(ctx, &device_attr)) {
+      printf("Could not query device: %d\n", dev_i);
+      assert(false);
+    }
+
+    printf("IB device %d:\n", dev_i);
+    printf("    Name: %s\n", dev_list[dev_i]->name);
+    printf("    Device name: %s\n", dev_list[dev_i]->dev_name);
+    printf("    GUID: %016llx\n",
+           (unsigned long long)ibv_get_device_guid(dev_list[dev_i]));
+    printf("    Node type: %d (-1: UNKNOWN, 1: CA, 4: RNIC)\n",
+           dev_list[dev_i]->node_type);
+    printf("    Transport type: %d (-1: UNKNOWN, 0: IB, 1: IWARP)\n",
+           dev_list[dev_i]->transport_type);
+
+    printf("    fw: %s\n", device_attr.fw_ver);
+    printf("    max_qp: %d\n", device_attr.max_qp);
+    printf("    max_cq: %d\n", device_attr.max_cq);
+    printf("    max_mr: %d\n", device_attr.max_mr);
+    printf("    max_pd: %d\n", device_attr.max_pd);
+    printf("    max_ah: %d\n", device_attr.max_ah);
+    printf("    phys_port_cnt: %hu\n", device_attr.phys_port_cnt);
+  }
+}
+
+
 void consensus_setup(follower_cb_t follower_cb, void *follower_cb_data) {
     set_cpu(MAIN_THREAD_CPU);
     printf("Setup\n");
+    ibv_devinfo();
     pid = getpid();
 
     g_ctx = create_ctx();

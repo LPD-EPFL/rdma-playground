@@ -129,11 +129,12 @@ void init_ctx_common(struct global_context *ctx, bool is_le) {
         NULL) {  // we only do this once & share this stuff among all contexts
         struct ibv_device **dev_list;
 
-        TEST_Z(dev_list = ibv_get_device_list(NULL),
+	int num_dev = 0;
+        TEST_Z(dev_list = ibv_get_device_list(&num_dev),
                "No IB-device available. get_device_list returned NULL");
 
         TEST_Z(
-            ctx->ib_dev = dev_list[0],
+            ctx->ib_dev = dev_list[num_dev - 1],
             "IB-device could not be assigned. Maybe dev_list array is empty");
 
         TEST_Z(ctx->context = ibv_open_device(ctx->ib_dev),
