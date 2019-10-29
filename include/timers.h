@@ -34,7 +34,7 @@ USAGE:
 #define TIMESTAMP_INIT
 #define TIMESTAMP_T struct timespec
 #define GET_TIMESTAMP(t) clock_gettime(CLOCK_MONOTONIC, &t)
-#define ELAPSED_NSEC(t1, t2) (t2.tv_nsec + t2.sec * 1000000000UL - t1.tv_nsec - t1.sec * 1000000000UL)
+#define ELAPSED_NSEC(t1, t2) (t2.tv_nsec + t2.tv_sec * 1000000000UL - t1.tv_nsec - t1.tv_sec * 1000000000UL)
 #endif
 
 #define UINT32_T uint32_t
