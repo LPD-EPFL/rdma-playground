@@ -30,11 +30,15 @@ void set_local_ib_connection(struct global_context *ctx, bool is_le) {
         } else {
             ctx->qps[i].rc_local_connection.vaddr = (uintptr_t)ctx->buf.log;
 
+#ifdef CONSENSUS_UC
             ctx->qps[i].uc_local_connection.qpn = ctx->qps[i].uc_qp->qp_num;
             ctx->qps[i].uc_local_connection.rkey = ctx->qps[i].mr_write->rkey;
             ctx->qps[i].uc_local_connection.lid = attr.lid;
             ctx->qps[i].uc_local_connection.psn = lrand48() & 0xffffff;
             ctx->qps[i].uc_local_connection.vaddr = (uintptr_t)ctx->buf.log;
+#else 
+            ctx->qps[i].uc_local_connection = ctx->qps[i].rc_local_connection;
+#endif // CONSENSUS_UC
         }
     }
 }
@@ -63,6 +67,7 @@ void exchange_ib_connection_info(struct global_context *ctx,
         sprintf(key, "dory-%s-rc-qp-%d-%d", suffix, ctx->my_index, i);
         dory_registry_publish(ctx->registry, key, msg, sizeof(msg));
 
+#ifdef CONSENSUS_UC
         if (ctx->qps[j].uc_qp != NULL) {
             local = &ctx->qps[j].uc_local_connection;
             sprintf(msg, "%04x:%06x:%06x:%08x:%016Lx", local->lid, local->qpn,
@@ -71,6 +76,7 @@ void exchange_ib_connection_info(struct global_context *ctx,
             sprintf(key, "dory-%s-uc-qp-%d-%d", suffix, ctx->my_index, i);
             dory_registry_publish(ctx->registry, key, msg, sizeof(msg));            
         }
+#endif        
 
         j++;
     }
@@ -98,6 +104,8 @@ void exchange_ib_connection_info(struct global_context *ctx,
                          &remote->psn, &remote->rkey, &remote->vaddr);
         CPE(cnt != 5, -1, "Could not parse message from peer");
 
+
+#ifdef CONSENSUS_UC 
         if (ctx->qps[j].uc_qp != NULL) {
             sprintf(key, "dory-%s-uc-qp-%d-%d", suffix, i, ctx->my_index);
             char *msg = NULL;
@@ -110,6 +118,9 @@ void exchange_ib_connection_info(struct global_context *ctx,
                              &remote->psn, &remote->rkey, &remote->vaddr);
             CPE(cnt != 5, -1, "Could not parse message from peer");          
         }
+#else
+        ctx->qps[j].uc_remote_connection = ctx->qps[j].rc_remote_connection;
+#endif  // CONSENSUS_UC      
 
         free(msg);
 
@@ -128,12 +139,15 @@ int qp_change_state_reset(struct qp_context *qpc) {
 
     TEST_NZ(ibv_modify_qp(qpc->rc_qp, &attr, IBV_QP_STATE),
             "Could not modify QP to RESET, ibv_modify_qp");
+
+#ifdef CONSENSUS_UC    
     if (qpc->uc_qp != NULL) {
         memset(&attr, 0, sizeof(attr));
         attr.qp_state = IBV_QPS_RESET;
         TEST_NZ(ibv_modify_qp(qpc->uc_qp, &attr, IBV_QP_STATE),
             "Could not modify QP to RESET, ibv_modify_qp");
     }
+#endif    
 
     return 0;
 }
@@ -157,6 +171,7 @@ int qp_change_state_init(struct qp_context *qpc) {
                               IBV_QP_ACCESS_FLAGS),
             "Could not modify QP to INIT, ibv_modify_qp");
 
+#ifdef CONSENSUS_UC
     if (qpc->uc_qp != NULL) {
         memset(&attr, 0, sizeof(attr));
 
@@ -170,6 +185,7 @@ int qp_change_state_init(struct qp_context *qpc) {
                                   IBV_QP_ACCESS_FLAGS),
                 "Could not modify QP to INIT, ibv_modify_qp");       
     }
+#endif
 
     return 0;
 }
@@ -201,7 +217,7 @@ int qp_change_state_rtr(struct qp_context *qpc) {
                               IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER),
             "Could not modify QP to RTR state");
 
-
+#ifdef CONSENSUS_UC
     if (qpc->uc_qp != NULL) {
         memset(&attr, 0, sizeof(attr));
         attr.qp_state = IBV_QPS_RTR;
@@ -219,6 +235,7 @@ int qp_change_state_rtr(struct qp_context *qpc) {
                                   IBV_QP_DEST_QPN | IBV_QP_RQ_PSN),
                 "Could not modify QP to RTR state");
     }
+#endif
 
     return 0;
 }
@@ -248,6 +265,7 @@ int qp_change_state_rts(struct qp_context *qpc) {
                               IBV_QP_MAX_QP_RD_ATOMIC),
             "Could not modify QP to RTS state");
 
+#ifdef CONSENSUS_UC
     if (qpc->uc_qp != NULL) {
         struct ibv_qp_attr attr;
         memset(&attr, 0, sizeof attr);
@@ -259,6 +277,7 @@ int qp_change_state_rts(struct qp_context *qpc) {
                               IBV_QP_STATE |  IBV_QP_SQ_PSN ),
                 "Could not modify QP to RTS state");        
     }
+#endif
 
     return 0;
 }

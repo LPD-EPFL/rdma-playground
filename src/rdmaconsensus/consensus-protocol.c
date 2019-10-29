@@ -196,9 +196,14 @@ int write_log_slot(log_t *log, uint64_t offset, value_t *value) {
 
     // post sends to everyone
     bool signaled = false;
-    // if (g_ctx.round_nb % BATCH_SIZE == 0) {
+#ifdef CONSENSUS_SIGNAL
+    if (g_ctx.round_nb % BATCH_SIZE == 0) {
+        signaled = true;
+    }
+#else 
     signaled = true;
-    // }
+#endif
+    
     rdma_write_to_all(log, offset, SLOT, signaled);
 
     if (signaled) {

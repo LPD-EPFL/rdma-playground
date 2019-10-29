@@ -141,6 +141,7 @@ struct global_context {
 
 static void
 set_cpu(int cpu) {
+#ifdef CONSENSUS_PIN
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET(cpu, &cpuset);
@@ -148,6 +149,7 @@ set_cpu(int cpu) {
     if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset)) {
         fprintf(stderr, "Error setting cpu affinity\n");
     }
+#endif 
 }
 
 struct global_context create_ctx();

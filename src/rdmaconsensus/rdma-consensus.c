@@ -207,6 +207,7 @@ void init_ctx_common(struct global_context *ctx, bool is_le) {
         qp_change_state_init(&ctx->qps[i]);
 
         if (!is_le) { // also initialize the UC QP
+#ifdef CONSENSUS_UC
             memset(&qp_init_attr, 0, sizeof(qp_init_attr));
             qp_init_attr.send_cq = ctx->cq;
             qp_init_attr.recv_cq = ctx->cq;
@@ -221,6 +222,9 @@ void init_ctx_common(struct global_context *ctx, bool is_le) {
                    "Could not create queue pair, ibv_create_qp");
 
             qp_change_state_init(&ctx->qps[i]);
+#else
+            ctx->qps[i].uc_qp = ctx->qps[i].rc_qp;   
+#endif // CONSENSUS_UC
         }
     }
 }
@@ -228,7 +232,9 @@ void init_ctx_common(struct global_context *ctx, bool is_le) {
 void destroy_ctx(struct global_context *ctx, bool is_le) {
     for (int i = 0; i < ctx->num_clients; i++) {
         rc_qp_destroy(ctx->qps[i].rc_qp, ctx->cq);
+#ifdef CONSENSUS_UC        
         rc_qp_destroy(ctx->qps[i].uc_qp, ctx->cq);
+#endif // CONSENSUS_UC        
     }
 
     TEST_NZ(ibv_destroy_cq(ctx->cq),

@@ -7,6 +7,12 @@ add_global_arguments(['-Wno-unused-function',
                       '-Wno-pedantic'],
                      language: ['c', 'cpp'])
 
+# add_global_arguments('-DCONSENSUS_UC', language : ['c', 'cpp'])
+add_global_arguments('-DCONSENSUS_INLINE', language : ['c', 'cpp'])
+add_global_arguments('-DCONSENSUS_PIN', language : ['c', 'cpp'])
+add_global_arguments('-DCONSENSUS_SIGNAL', language : ['c', 'cpp'])
+
+
 # Used for linux CPU affinity
 add_global_arguments('-D_GNU_SOURCE', language : ['c', 'cpp'])
 

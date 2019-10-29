@@ -20,7 +20,7 @@ extern struct global_context le_ctx;
 // extern volatile bool stop_le;
 
 // Benchmarking code - Start
-const int MEDIAN_SAMPLE_SIZE = 10;
+const int MEDIAN_SAMPLE_SIZE = 1000000;
 
 TIMESTAMP_T *timestamps = NULL;
 uint64_t *elapsed_times = NULL;
@@ -47,6 +47,7 @@ void sig_handler(int signo) {
     }
     fprintf(fptr, "\n");
     fclose(fptr);
+    printf("Done with the log\n");
   }
 }
 // Benchmarking code - End

@@ -188,9 +188,11 @@ static int post_send_inner(struct ibv_qp *qp, void *buf, uint32_t len,
     if (signaled) {
         wr.send_flags |= IBV_SEND_SIGNALED;
     }
+#ifdef CONSENSUS_INLINE
     if (opcode == IBV_WR_RDMA_WRITE && len <= MAX_INLINE_DATA) {
         wr.send_flags |= IBV_SEND_INLINE;
     }
+#endif
     wr.wr.rdma.remote_addr = remote_addr;
     wr.wr.rdma.rkey = rkey;
 
