@@ -290,7 +290,9 @@ void consensus_propose_leader_median() {
         // Warm-up
         propose(data, 8);
 
-        int sz = 128;
+        char* size_env = getenv ("SZ");
+        int sz = atoi(size_env);
+        // int sz = 128;
 
         for (int i = 0; i < MEDIAN_SAMPLE_SIZE; ++i) {
             GET_TIMESTAMP(timestamps[i]);
@@ -309,7 +311,7 @@ void consensus_propose_leader_median() {
         log_print(g_ctx.buf.log);
     }
 
-    printf("Done\n");
+    printf("Done. My pid is %d\n", (int)getpid());
     sleep(600);
 
     stop_leader_election();

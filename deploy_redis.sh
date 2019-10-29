@@ -1,10 +1,10 @@
 #!/bin/bash
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
-nodes=("h193" "h194" "h195")
+# nodes=("h193" "h194" "h195")
 # nodes=("h193" "h194" "h195" "h199" "h200")
 # nodes=("h193" "h194" "h195" "h199" "h200" "h202" "h203")
-# nodes=("h193" "h194" "h195" "h199" "h200" "h202" "h203" "h210" "h211")
+nodes=("h193" "h194" "h195" "h199" "h200" "h202" "h203" "h210" "h211")
 
 startme() {
     # Start memcached on the first node

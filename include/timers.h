@@ -43,9 +43,9 @@ USAGE:
 typedef struct {
     UINT32_T l;
     UINT32_T h;
-} x86_64_timeval_t;
+} x86_64_timeval_tt;
 
-#define HRT_TIMESTAMP_T x86_64_timeval_t
+#define HRT_TIMESTAMP_T x86_64_timeval_tt
 
 #define HRT_GET_TIMESTAMP_UNSAFE(t1) \
     __asm__ __volatile__("rdtsc" : "=a"(t1.l), "=d"(t1.h));
