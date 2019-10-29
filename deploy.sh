@@ -1,7 +1,10 @@
 #!/bin/bash
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
-nodes=("lpdquatro2" "lpdquatro3" "lpdquatro4")
+nodes=("h193" "h194" "h195")
+#nodes=("h193" "h194" "h195" "h199" "h200")
+#nodes=("h193" "h194" "h195" "h199" "h200" "h202" "h203")
+#nodes=("h193" "h194" "h195" "h199" "h200" "h202" "h203" "h210" "h211")
 
 config_toml=$(cat <<EOF
 [registry]
@@ -16,7 +19,8 @@ EOF
 
 startme() {
     # Start memcached on the first node
-    ip=`getent hosts ${nodes[0]} | awk '{ print $1 }'`
+    # ip=`getent hosts ${nodes[0]} | awk '{ print $1 }'`
+    ip='10.91.19.193'
 
     for ((j=0; j<${#nodes[@]}; j++)); do
         # if [[ "x${nodes[$j]}" == "x$HOSTNAME" ]]; then
@@ -30,8 +34,10 @@ startme() {
         fi
 
 ssh "$USER@${nodes[$j]}" /bin/bash << EOF
+    module load tmux
     tmux start-server
     tmux kill-session -t peregrin 2> /dev/null
+    killall memcached
     mkdir -p $DIR/peregrin_deployment
     cd $DIR/peregrin_deployment
     echo "$config_toml" > config.${nodes[$j]}.toml
@@ -50,7 +56,7 @@ EOF
 
 stopme() {
     for ((j=0; j<${#nodes[@]}; j++)); do
-        ssh "$USER@${nodes[$j]}" "tmux kill-session -t peregrin"
+        ssh "$USER@${nodes[$j]}" "module load tmux; killall memcached; tmux kill-session -t peregrin"
     done
 }
 
