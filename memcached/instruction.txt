@@ -1,0 +1,66 @@
+# Instructions
+
+##build memcached 1.5.19
+simply run:
+./install_1.5.19.sh
+
+## build memcached 1.2.6
+
+simply run:
+./install_1.2.6.sh
+
+## build memcached manually
+
+--download and unzip--
+wget https://github.com/memcached/memcached/archive/1.2.6.tar.gz
+tar -xf 1.2.6.tar.gz
+
+--
+patch -p1 -d memcached-1.2.6/ <patch1.2.6.diff
+cd memcached-1.2.6/
+./autogen.sh
+./configure --prefix=$(pwd)/../bin-1.2.6
+
+sed -i "s/LIBS =  -levent/LIBS =  -levent\nLIBS += -libverbs -lrdmaconsensus -lnuma -pthread -lmemcached/" Makefile
+
+make
+make install
+
+
+## launch memcached 1.2.6 with consensus
+
+--on server run--
+memcached
+and
+CONFIG=config/config.0.toml IS_LEADER=1 bin-1.2.6/bin/memcached -p 11222
+
+--on duplicates--
+CONFIG=config/config.1.toml bin-1.2.6/bin/memcached -p 11222
+--or--
+CONFIG=config/config.2.toml bin-1.2.6/bin/memcached -p 11222
+
+
+--client--
+telnet localhost 11222
+
+>set keyname 0 0 dataSize
+>data
+
+>get keyname
+
+
+## Query in C:
+--GET--
+char* query = ...;
+int len = sprintf(query, "get %s\r\n", key);
+
+--SET flag 0 and no timeout--
+char* query = ...;
+int len = sprintf(query, "set %s 0 0 %d\r\n%s\r\n", key, strlen(value), value );
+
+--SET custom flag and timeout--
+char* query = ...;
+int len = sprintf(query, "set %s %d %d %d\r\n%s\r\n", key,flag,timeout, strlen(value), value );
+
+
+

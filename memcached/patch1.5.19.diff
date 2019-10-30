@@ -1,10 +1,13 @@
---- original/memcached.c	2019-10-01 04:33:41.000000000 +0200
-+++ memcached-1.5.19/memcached.c	2019-10-24 13:48:14.258557006 +0200
-@@ -53,6 +53,12 @@
+Only in 1.5.19Mod/: config.h
+Common subdirectories: memcached-1.5.19/doc and 1.5.19Mod/doc
+Common subdirectories: memcached-1.5.19/m4 and 1.5.19Mod/m4
+diff -u memcached-1.5.19/memcached.c 1.5.19Mod/memcached.c
+--- memcached-1.5.19/memcached.c	2019-10-01 04:33:41.000000000 +0200
++++ 1.5.19Mod/memcached.c	2019-10-30 14:47:54.851563399 +0100
+@@ -53,6 +53,11 @@
  #include <sysexits.h>
  #include <stddef.h>
  
-+
 +/*
 +* Added by lovitana
 +*/
@@ -13,7 +16,27 @@
  #ifdef HAVE_GETOPT_LONG
  #include <getopt.h>
  #endif
-@@ -3012,6 +3018,27 @@
+@@ -77,6 +82,19 @@
+ #endif
+ 
+ /*
++ *ADDED BY lovitana
++ */
++
++void launch_dummy_thread(void);
++void drain_dummy_client(int fd);
++void *dummy_client(void *arg);
++void follower_cb(void *userdata, char *buf, int data_len);
++
++/*
++ * END
++ */
++
++/*
+  * forward declarations
+  */
+ static void drive_machine(conn *c);
+@@ -3012,6 +3030,29 @@
      item *new_it = NULL;
      uint32_t flags;
  
@@ -21,7 +44,8 @@
 +	/*
 +	*ADDED BY lovitana
 +	*/
-+	
++	fprintf(stderr,"starting propose");
++
 +	size_t q_size = it->nbytes + c->last_cmd_size + 2;
 +	char* query = calloc(q_size + 1, sizeof(char));
 +	char *tmp_ptr = query;
@@ -31,7 +55,8 @@
 +	free(c->last_cmd);
 +
 +	consensus_propose((uint8_t*)query, q_size);
-+
++	
++	fprintf(stderr,"end propose");
 +
 +	free(query);
 +	/*
@@ -41,16 +66,19 @@
      if (old_it != NULL && comm == NREAD_ADD) {
          /* add only adds a nonexistent item, but promote to head of LRU */
          do_item_update(old_it);
-@@ -5755,6 +5782,16 @@
+@@ -5755,6 +5796,19 @@
  #endif
  static void process_command(conn *c, char *command) {
  
 +	/*
 +	* ADDED by lovitana
 +	*/
++	
++	fprintf(stderr,"\ncopy cmd\n");
 +	c->last_cmd_size = strlen(command)+1;
 +	c->last_cmd = calloc(c->last_cmd_size,sizeof(char));
 +	strcpy(c->last_cmd , command);
++	fprintf(stderr,"\ncopy cmd\n");
 +	/*
 +	*END
 +	*/
@@ -58,7 +86,7 @@
      token_t tokens[MAX_TOKENS];
      size_t ntokens;
      int comm;
-@@ -8238,8 +8275,150 @@
+@@ -8238,8 +8292,153 @@
      return reuse_mmap;
  }
  
@@ -88,9 +116,9 @@
 +void *dummy_client(void *arg) {
 +    (void) arg;
 +
-+    fprintf(stderr, "Waiting 30s for redis to start...\n");
++    fprintf(stderr, "Waiting 30s for memcached to start...\n");
 +    sleep(30);
-+    fprintf(stderr, "We hope that redis started. We spawn the dummy client now...\n");
++    fprintf(stderr, "We hope that memcached started. We spawn the dummy client now...\n");
 +    // Connect using tcp
 +    int sockfd;
 +    struct sockaddr_in servaddr;
@@ -98,11 +126,11 @@
 +    // socket create and varification
 +    sockfd = socket(AF_INET, SOCK_STREAM, 0);
 +    if (sockfd == -1) {
-+        printf("socket creation failed...\n");
++        fprintf(stderr,"socket creation failed...\n");
 +        exit(0);
 +    }
 +    else
-+        printf("Socket successfully created..\n");
++        fprintf(stderr,"Socket successfully created..\n");
 +    bzero(&servaddr, sizeof(servaddr));
 +
 +    // assign IP, PORT
@@ -112,18 +140,18 @@
 +
 +    // connect the client socket to server socket
 +    if (connect(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) != 0) {
-+        printf("connection with the server failed...\n");
++        fprintf(stderr,"connection with the server failed...\n");
 +        exit(0);
 +    }
 +    else
-+        printf("connected to the server..\n");
++        fprintf(stderr,"connected to the server..\n");
 +
 +    // We're going to manipulate done and use the cond, so we need the mutex
 +    // pthread_mutex_lock(&dummy_client_mutex);
 +
 +    // Increase the count of threads that have finished their work.
 +    dummy_client_sockfd = sockfd;
-+    printf( "[thread] dummy_client_sockfd is now %d.\n", dummy_client_sockfd);
++    fprintf(stderr,"[thread] dummy_client_sockfd is now %d.\n", dummy_client_sockfd);
 +
 +    __asm__ __volatile__ ("" : : :"memory");
 +
@@ -172,6 +200,7 @@
 +    }
 +}
 +
++
 +/*
 +* END
 +*/
@@ -191,8 +220,10 @@
 +        launch_dummy_thread();
 +        consensus_setup(follower_cb, &dummy_client_sockfd);
 +    }
++    fprintf(stderr,"starting\n");
 +    consensus_start_leader_election();
 +	
++    fprintf(stderr,"end leader election\n");
 +	/*
 +	* END
 +	*/
@@ -210,7 +241,7 @@
      bool lock_memory = false;
      bool do_daemonize = false;
      bool preallocate = false;
-@@ -9769,6 +9948,14 @@
+@@ -9769,6 +9968,14 @@
      }
  
      fprintf(stderr, "Gracefully stopping\n");
@@ -225,9 +256,9 @@
      stop_threads();
      int i;
      // FIXME: make a function callable from threads.c
-diff -u original/memcached.h memcached-1.5.19/memcached.h
---- original/memcached.h	2019-10-01 04:33:41.000000000 +0200
-+++ memcached-1.5.19/memcached.h	2019-10-24 13:49:53.932242685 +0200
+diff -u memcached-1.5.19/memcached.h 1.5.19Mod/memcached.h
+--- memcached-1.5.19/memcached.h	2019-10-01 04:33:41.000000000 +0200
++++ 1.5.19Mod/memcached.h	2019-10-30 14:48:01.319701709 +0100
 @@ -717,6 +717,13 @@
      ssize_t (*read)(conn  *c, void *buf, size_t count);
      ssize_t (*sendmsg)(conn *c, struct msghdr *msg, int flags);
@@ -242,3 +273,16 @@ diff -u original/memcached.h memcached-1.5.19/memcached.h
  };
  
  /* array of conn structures, indexed by file descriptor */
+diff -u memcached-1.5.19/restart.c 1.5.19Mod/restart.c
+--- memcached-1.5.19/restart.c	2019-10-01 04:33:41.000000000 +0200
++++ 1.5.19Mod/restart.c	2019-10-30 14:47:55.059567847 +0100
+@@ -9,6 +9,7 @@
+ #include <sys/stat.h>
+ #include <fcntl.h>
+ #include <string.h>
++#include <stdarg.h>
+ 
+ typedef struct _restart_data_cb restart_data_cb;
+ 
+Common subdirectories: memcached-1.5.19/scripts and 1.5.19Mod/scripts
+Common subdirectories: memcached-1.5.19/t and 1.5.19Mod/t

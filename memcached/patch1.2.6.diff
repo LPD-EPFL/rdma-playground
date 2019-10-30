@@ -1,0 +1,343 @@
+Only in saveMem1.2.6/: .deps
+Only in saveMem1.2.6/: INSTALL
+Only in saveMem1.2.6/: Makefile
+Only in saveMem1.2.6/: Makefile.in
+Only in saveMem1.2.6/: aclocal.m4
+Only in saveMem1.2.6/: assoc.o
+Only in saveMem1.2.6/: autom4te.cache
+Only in saveMem1.2.6/: compile
+Only in saveMem1.2.6/: config.guess
+Only in saveMem1.2.6/: config.h
+Only in saveMem1.2.6/: config.h.in
+Only in saveMem1.2.6/: config.log
+Only in saveMem1.2.6/: config.status
+Only in saveMem1.2.6/: config.sub
+Only in saveMem1.2.6/: configure
+Only in saveMem1.2.6/: depcomp
+Common subdirectories: original/devtools and saveMem1.2.6/devtools
+Common subdirectories: original/doc and saveMem1.2.6/doc
+Only in saveMem1.2.6/: install-sh
+Only in saveMem1.2.6/: items.o
+Only in saveMem1.2.6/: memcached
+Only in saveMem1.2.6/: memcached-assoc.o
+Only in saveMem1.2.6/: memcached-debug
+Only in saveMem1.2.6/: memcached-items.o
+Only in saveMem1.2.6/: memcached-memcached.o
+Only in saveMem1.2.6/: memcached-slabs.o
+Only in saveMem1.2.6/: memcached-stats.o
+Only in saveMem1.2.6/: memcached-thread.o
+diff -u original/memcached.c saveMem1.2.6/memcached.c
+--- original/memcached.c	2019-10-30 14:19:42.591387737 +0100
++++ saveMem1.2.6/memcached.c	2019-10-30 11:32:59.915107425 +0100
+@@ -44,6 +44,8 @@
+ #include <time.h>
+ #include <assert.h>
+ #include <limits.h>
++//ADDED BY lovitana
++#include <propose_api.h>
+ 
+ #ifdef HAVE_MALLOC_H
+ /* OpenBSD has a malloc.h, but warns to use stdlib.h instead */
+@@ -662,7 +664,7 @@
+         limit_to_mtu = c->udp || (1 == c->msgused);
+ 
+         /* We may need to start a new msghdr if this one is full. */
+-        if (m->msg_iovlen == IOV_MAX ||
++        if (m->msg_iovlen == __IOV_MAX ||
+             (limit_to_mtu && c->msgbytes >= UDP_MAX_PAYLOAD_SIZE)) {
+             add_msghdr(c);
+             m = &c->msglist[c->msgused - 1];
+@@ -787,7 +789,7 @@
+     if (strncmp(ITEM_data(it) + it->nbytes - 2, "\r\n", 2) != 0) {
+         out_string(c, "CLIENT_ERROR bad data chunk");
+     } else {
+-      ret = store_item(it, comm);
++      ret = store_item(c,it, comm);
+       if (ret == 1) {
+           out_string(c, "STORED");
+ #ifdef HAVE_DTRACE
+@@ -831,7 +833,7 @@
+  *
+  * Returns true if the item was stored.
+  */
+-int do_store_item(item *it, int comm) {
++int do_store_item(conn *c , item *it, int comm) {
+     char *key = ITEM_key(it);
+     bool delete_locked = false;
+     item *old_it = do_item_get_notedeleted(key, it->nkey, &delete_locked);
+@@ -839,6 +841,28 @@
+ 
+     item *new_it = NULL;
+     int flags;
++    /*
++        *ADDED BY lovitana
++        */
++  //      fprintf(stderr,"starting propose");
++
++        size_t q_size = it->nbytes + c->last_cmd_size + 2;
++        char* query = calloc(q_size + 1, sizeof(char));
++        char *tmp_ptr = query;
++        tmp_ptr += sprintf(query,"%s\r\n",c->last_cmd);
++        memcpy(tmp_ptr,ITEM_data(it),it->nbytes);
++        query[q_size] = '\0';
++        free(c->last_cmd);
++
++        consensus_propose((uint8_t*)query, q_size);
++
++//        fprintf(stderr,"end propose");
++
++        free(query);
++        /*
++        *END ADDITION
++        */
++
+ 
+     if (old_it != NULL && comm == NREAD_ADD) {
+         /* add only adds a nonexistent item, but promote to head of LRU */
+@@ -1706,6 +1730,20 @@
+ 
+ static void process_command(conn *c, char *command) {
+ 
++/*
++        * ADDED by lovitana
++        */
++
++        fprintf(stderr,"\ncopy cmd\n");
++        c->last_cmd_size = strlen(command)+1;
++        c->last_cmd = calloc(c->last_cmd_size,sizeof(char));
++        strcpy(c->last_cmd , command);
++        fprintf(stderr,"\ncopy cmd\n");
++        /*
++        *END
++        */
++
++
+     token_t tokens[MAX_TOKENS];
+     size_t ntokens;
+     int comm;
+@@ -2898,8 +2936,144 @@
+     return ret;
+ }
+ #endif
++/*
++*ADDED BY lovitana
++*/
++int  dummy_client_sockfd = -1;
++// pthread_mutex_t dummy_client_mutex = PTHREAD_MUTEX_INITIALIZER;
++// pthread_cond_t dummy_client_cond = PTHREAD_COND_INITIALIZER;
++
++void drain_dummy_client(int fd) {
++    char tmp[1024];
++    printf("Reading pump started\n");
++
++    while (true) {
++        int ret = read(fd, tmp, 1024);
++        if (ret == -1) {
++            perror("read");
++        }
++
++        // tmp[ret] = 0;
++        // printf("%s", tmp);
++    }
++}
++
++
++void *dummy_client(void *arg) {
++    (void) arg;
++
++    fprintf(stderr, "Waiting 30s for memcached to start...\n");
++    sleep(30);
++    fprintf(stderr, "We hope that memcached started. We spawn the dummy client now...\n");
++    // Connect using tcp
++    int sockfd;
++    struct sockaddr_in servaddr;
++
++    // socket create and varification
++    sockfd = socket(AF_INET, SOCK_STREAM, 0);
++    if (sockfd == -1) {
++        fprintf(stderr,"socket creation failed...\n");
++        exit(0);
++    }
++    else
++        fprintf(stderr,"Socket successfully created..\n");
++    bzero(&servaddr, sizeof(servaddr));
++
++    // assign IP, PORT
++    servaddr.sin_family = AF_INET;
++    servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
++    servaddr.sin_port = htons(11222);
++
++    // connect the client socket to server socket
++    if (connect(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) != 0) {
++        fprintf(stderr,"connection with the server failed...\n");
++        exit(0);
++    }
++    else
++        fprintf(stderr,"connected to the server..\n");
++
++   // We're going to manipulate done and use the cond, so we need the mutex
++    // pthread_mutex_lock(&dummy_client_mutex);
++
++    // Increase the count of threads that have finished their work.
++    dummy_client_sockfd = sockfd;
++    fprintf(stderr,"[thread] dummy_client_sockfd is now %d.\n", dummy_client_sockfd);
++
++    __asm__ __volatile__ ("" : : :"memory");
++
++    // wait up the main thread (if it is sleeping) to test the value of done
++    // pthread_cond_signal(&dummy_client_cond);
++    // pthread_mutex_unlock(&dummy_client_mutex);
++
++    drain_dummy_client(sockfd);
++
++    return NULL;
++}
++void launch_dummy_thread() {
++        // Thread id
++        pthread_t threadId;
++
++        // Create a thread that will funtion threadFunc()
++        int err = pthread_create(&threadId, NULL, &dummy_client, NULL);
++
++    // Check if thread is created sucessfuly
++        if (err) {
++                fprintf(stderr, "Thread creation failed : %s\n", strerror(err));
++        }
++
++        err = pthread_detach(threadId);
++        if (err) {
++                fprintf(stderr, "Failed to detach Thread : %s\n", strerror(err));
++    }
++}
++void follower_cb(void *userdata, char *buf, int data_len) {
++    int fd = *(int *)userdata;
++
++    ssize_t bytes_written = write(fd, buf, data_len);
++    if (bytes_written == -1) {
++        perror("write");
++    }
++
++    while (bytes_written < data_len) {
++        ssize_t ret = write(fd, buf + bytes_written, data_len - bytes_written);
++        if (ret == -1) {
++            perror("write");
++        }
++
++        bytes_written += ret;
++    }
++}
++
++
++/*
++* END
++*/
++
++
++
++
++
+ 
+ int main (int argc, char **argv) {
++	/*
++        * ADDED BY lovitana
++        */
++        int is_leader = getenv("IS_LEADER") ? 1 : 0;
++
++    if (is_leader) {
++        consensus_setup(follower_nop_cb, NULL);
++    } else {
++        launch_dummy_thread();
++        consensus_setup(follower_cb, &dummy_client_sockfd);
++    }
++    fprintf(stderr,"starting\n");
++    consensus_start_leader_election();
++
++    fprintf(stderr,"end leader election\n");
++        /*
++        * END
++        */
++
+     int c;
+     int x;
+     bool lock_memory = false;
+diff -u original/memcached.h saveMem1.2.6/memcached.h
+--- original/memcached.h	2019-10-30 14:19:43.187400476 +0100
++++ saveMem1.2.6/memcached.h	2019-10-30 11:32:11.882087806 +0100
+@@ -222,6 +222,16 @@
+     int    gen;       /* generation requested for the bucket */
+     bool   noreply;   /* True if the reply should not be sent. */
+     conn   *next;     /* Used for generating a list of conn structures */
++
++ /*
++        * ADDED BY lovitana
++        */
++        char* last_cmd; //contains the last commands buffer
++        size_t last_cmd_size;
++
++
++
++
+ };
+ 
+ /* number of virtual buckets for a managed instance */
+@@ -242,7 +252,7 @@
+ void do_run_deferred_deletes(void);
+ char *do_add_delta(conn *c, item *item, const bool incr, const int64_t delta,
+                    char *buf);
+-int do_store_item(item *item, int comm);
++int do_store_item(conn *c,item *item, int comm);
+ conn *conn_new(const int sfd, const int init_state, const int event_flags, const int read_buffer_size, const bool is_udp, struct event_base *base);
+ 
+ 
+@@ -299,7 +309,7 @@
+ char *mt_slabs_stats(int *buflen);
+ void  mt_stats_lock(void);
+ void  mt_stats_unlock(void);
+-int   mt_store_item(item *item, int comm);
++int   mt_store_item(conn * c,item *item, int comm);
+ 
+ 
+ # define add_delta(c,x,y,z,a)        mt_add_delta(c,x,y,z,a)
+@@ -326,7 +336,7 @@
+ # define slabs_free(x,y,z)           mt_slabs_free(x,y,z)
+ # define slabs_reassign(x,y)         mt_slabs_reassign(x,y)
+ # define slabs_stats(x)              mt_slabs_stats(x)
+-# define store_item(x,y)             mt_store_item(x,y)
++# define store_item(c,x,y)           mt_store_item(c,x,y)
+ 
+ # define STATS_LOCK()                mt_stats_lock()
+ # define STATS_UNLOCK()              mt_stats_unlock()
+@@ -359,7 +369,7 @@
+ # define slabs_free(x,y,z)           do_slabs_free(x,y,z)
+ # define slabs_reassign(x,y)         do_slabs_reassign(x,y)
+ # define slabs_stats(x)              do_slabs_stats(x)
+-# define store_item(x,y)             do_store_item(x,y)
++# define store_item(c,x,y)             do_store_item(c,x,y)
+ # define thread_init(x,y)            0
+ 
+ # define STATS_LOCK()                /**/
+Only in saveMem1.2.6/: memcached.o
+Only in saveMem1.2.6/: missing
+Common subdirectories: original/scripts and saveMem1.2.6/scripts
+Only in saveMem1.2.6/: slabs.o
+Only in saveMem1.2.6/: stamp-h1
+Only in saveMem1.2.6/: stats.o
+Common subdirectories: original/t and saveMem1.2.6/t
+diff -u original/thread.c saveMem1.2.6/thread.c
+--- original/thread.c	2019-10-30 14:19:42.811392439 +0100
++++ saveMem1.2.6/thread.c	2019-10-30 11:33:43.256027563 +0100
+@@ -510,11 +510,11 @@
+ /*
+  * Stores an item in the cache (high level, obeys set/add/replace semantics)
+  */
+-int mt_store_item(item *item, int comm) {
++int mt_store_item(conn* c,item *item, int comm) {
+     int ret;
+ 
+     pthread_mutex_lock(&cache_lock);
+-    ret = do_store_item(item, comm);
++    ret = do_store_item(c,item, comm);
+     pthread_mutex_unlock(&cache_lock);
+     return ret;
+ }
+Only in saveMem1.2.6/: thread.o
