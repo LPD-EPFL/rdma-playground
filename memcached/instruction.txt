@@ -50,6 +50,8 @@ telnet localhost 11222
 
 
 ## Query in C:
+Connect to he server through port 11222!
+
 --GET--
 char* query = ...;
 int len = sprintf(query, "get %s\r\n", key);

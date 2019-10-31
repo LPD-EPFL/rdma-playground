@@ -44,7 +44,7 @@ diff -u memcached-1.5.19/memcached.c 1.5.19Mod/memcached.c
 +	/*
 +	*ADDED BY lovitana
 +	*/
-+	fprintf(stderr,"starting propose");
++//	fprintf(stderr,"starting propose");
 +
 +	size_t q_size = it->nbytes + c->last_cmd_size + 2;
 +	char* query = calloc(q_size + 1, sizeof(char));
@@ -56,7 +56,7 @@ diff -u memcached-1.5.19/memcached.c 1.5.19Mod/memcached.c
 +
 +	consensus_propose((uint8_t*)query, q_size);
 +	
-+	fprintf(stderr,"end propose");
++//	fprintf(stderr,"end propose");
 +
 +	free(query);
 +	/*
@@ -74,11 +74,11 @@ diff -u memcached-1.5.19/memcached.c 1.5.19Mod/memcached.c
 +	* ADDED by lovitana
 +	*/
 +	
-+	fprintf(stderr,"\ncopy cmd\n");
++	//fprintf(stderr,"\ncopy cmd\n");
 +	c->last_cmd_size = strlen(command)+1;
 +	c->last_cmd = calloc(c->last_cmd_size,sizeof(char));
 +	strcpy(c->last_cmd , command);
-+	fprintf(stderr,"\ncopy cmd\n");
++	//fprintf(stderr,"\ncopy cmd\n");
 +	/*
 +	*END
 +	*/
