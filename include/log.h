@@ -42,8 +42,8 @@ struct counter {
 typedef struct counter counter_t;
 
 struct req_ack {
-    uint8_t req;
-    uint8_t ack;
+    uint64_t req;
+    uint64_t ack;
 };
 typedef struct req_ack req_ack_t;
 

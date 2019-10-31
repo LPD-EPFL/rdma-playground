@@ -210,10 +210,11 @@ static void wait_for_perm_ack(int n) {
 
     while (acks < n) {
         for (uint64_t i = 0; i < len; ++i) {
-            if (le_ctx.buf.le_data->perm_reqs_acks[i].ack == 1) {
-                le_ctx.buf.le_data->perm_reqs_acks[i].ack = 0;
-                printf("Got ack from %lu\n", i);
+            if (le_ctx.buf.le_data->perm_reqs_acks[i].ack != 0) {
+                printf("Got ack from %lu: %lu\n", i, le_ctx.buf.le_data->perm_reqs_acks[i].ack);
+                g_ctx.qps[i].rc_remote_connection.rkey = le_ctx.buf.le_data->perm_reqs_acks[i].ack;
                 acks += 1;
+                le_ctx.buf.le_data->perm_reqs_acks[i].ack = 0;
             }
         }
     }
@@ -261,7 +262,6 @@ void rdma_ask_permission(le_data_t *le_data, uint64_t my_index, bool signaled) {
 }
 
 static void send_perm_ack(int index) {
-    printf("Sending ack to %d\n", index);
 
     void *local_address;
     uint64_t remote_addr;
@@ -272,12 +272,13 @@ static void send_perm_ack(int index) {
         (index < le_ctx.my_index)
             ? le_ctx.my_index - 1
             : le_ctx.my_index;  // my index in the other side's qps array
-    printf("Sending ack to %d, my index in their array is %d\n", index,
-           my_index);
-    le_ctx.buf.le_data->perm_reqs_acks[my_index].ack = 1;
-
+    le_ctx.buf.le_data->perm_reqs_acks[my_index].ack = g_ctx.qps[index].mr_write->rkey;
     local_address = &le_ctx.buf.le_data->perm_reqs_acks[my_index].ack;
-    req_size = sizeof(uint8_t);
+
+    printf("Sending ack to %d, my index in their array is %d, ack is %lu\n", index,
+           my_index, *(uint64_t*)local_address);
+
+    req_size = sizeof(uint64_t);
 
     g_ctx.round_nb++;
     WRID_SET_SSN(wrid, g_ctx.round_nb);
@@ -318,6 +319,7 @@ void check_permission_requests() {
             printf("Permission request from %d, my_index = %d, j = %d\n", i,
                    le_ctx.my_index, j);
             printf("rkeys before:%u, %u\n", g_ctx.qps[0].mr_write->rkey, g_ctx.qps[1].mr_write->rkey);
+            // printf("vaddr before:%u, %u\n", g_ctx.qps[0].mr_write->vaddr, g_ctx.qps[1].mr_write->vaddr);
             permission_switch(
                 g_ctx.qps[g_ctx.cur_write_permission]
                     .mr_write,          // mr losing permission
@@ -328,6 +330,7 @@ void check_permission_requests() {
                  IBV_ACCESS_LOCAL_WRITE));
 
             printf("rkeys after:%u, %u\n", g_ctx.qps[0].mr_write->rkey, g_ctx.qps[1].mr_write->rkey);
+            // printf("vaddr after:%u, %u\n", g_ctx.qps[0].mr_write->vaddr, g_ctx.qps[1].mr_write->vaddr);
 
             g_ctx.cur_write_permission = j;
 
