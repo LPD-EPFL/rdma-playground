@@ -25,7 +25,7 @@ bool propose(uint8_t *buf, size_t len) {
         }
 
         if (need_init) {
-            rdma_ask_permission(le_ctx.buf.le_data, le_ctx.my_index, true);
+            // rdma_ask_permission(le_ctx.buf.le_data, le_ctx.my_index, true);
             // // should always succeed
 
             rc = update_followers();
@@ -200,10 +200,10 @@ int write_log_slot(log_t *log, uint64_t offset, value_t *value) {
     if (g_ctx.round_nb % BATCH_SIZE == 0) {
         signaled = true;
     }
-#else 
+#else
     signaled = true;
 #endif
-    
+
     rdma_write_to_all(log, offset, SLOT, signaled);
 
     if (signaled) {

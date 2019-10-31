@@ -1,10 +1,10 @@
 #!/bin/bash
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
-nodes=("h193" "h194" "h195")
+# nodes=("h193" "h194" "h195")
 # nodes=("h193" "h194" "h195" "h199" "h200")
 # nodes=("h193" "h194" "h195" "h199" "h200" "h202" "h203")
-# nodes=("h193" "h194" "h195" "h199" "h200" "h202" "h203" "h210" "h211")
+nodes=("h193" "h194" "h195" "h199" "h200" "h202" "h203" "h210" "h211")
 
 startme() {
     # Start memcached on the first node
@@ -25,6 +25,8 @@ startme() {
 
 ssh "$USER@${nodes[$j]}" /bin/bash << EOF
     tmux start-server
+    pkill -9 memcached
+    pkill -9 redis-server
     tmux kill-session -t peregrin 2> /dev/null
     mkdir -p $DIR/peregrin_deployment
     cd $DIR/peregrin_deployment
@@ -39,7 +41,7 @@ EOF
 
 stopme() {
     for ((j=0; j<${#nodes[@]}; j++)); do
-        ssh "$USER@${nodes[$j]}" "killall memcached; killall redis-server; tmux kill-session -t peregrin"
+        ssh "$USER@${nodes[$j]}" "pkill -9 memcached; killall memcached; pkill -9 redis-server; killall redis-server; tmux kill-session -t peregrin"
     done
 }
 

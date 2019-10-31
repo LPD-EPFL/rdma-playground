@@ -258,7 +258,7 @@ void rdma_ask_permission(le_data_t *le_data, uint64_t my_index, bool signaled) {
                g_ctx.completed_ops);
 
     // wait for at least one permission ack to arrive
-    wait_for_perm_ack(2);
+    wait_for_perm_ack(g_ctx.num_clients);
 }
 
 static void send_perm_ack(int index) {
