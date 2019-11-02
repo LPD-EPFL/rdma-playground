@@ -23,11 +23,27 @@ extern struct global_context le_ctx;
 const int MEDIAN_SAMPLE_SIZE = 1000000;
 
 TIMESTAMP_T *timestamps = NULL;
+#ifdef LEADER_CHANGE
+TIMESTAMP_T le_stop_tsp = {0};
+TIMESTAMP_T le_change_tsp = {0};
+TIMESTAMP_T le_perm_tsp = {0};
+#endif
+TIMESTAMP_T *batch_timestamps = NULL;
 uint64_t *elapsed_times = NULL;
 // uint64_t timestamp_idx = 0;
 
 void sig_handler(int signo) {
+
+#ifdef LEADER_CHANGE
+    if (signo == SIGSEGV || signo == SIGINT) {
+        printf("Stopped leader election: %lu\n", TO_NSEC(le_stop_tsp));
+        printf("New leader: %lu\n", TO_NSEC(le_change_tsp));
+        printf("Got permissions: %lu\n", TO_NSEC(le_perm_tsp));
+        exit(1);
+    }
+#else   
   if (signo == SIGUSR1) {
+
     printf("Dumping the log\n");
     __sync_synchronize();
 
@@ -46,9 +62,11 @@ void sig_handler(int signo) {
         fprintf(fptr, "%0.3f us\n", (double)elapsed_times[i] / 1000.0);
     }
     fprintf(fptr, "\n");
+
     fclose(fptr);
     printf("Done with the log\n");
   }
+#endif
 }
 // Benchmarking code - End
 
@@ -320,6 +338,115 @@ void consensus_propose_leader_median() {
     free(timestamps);
     free(elapsed_times);
 }
+
+void consensus_propose_leader_change() {
+    TIMESTAMP_INIT
+
+    if (signal(SIGSEGV, sig_handler) == SIG_ERR) {
+        printf("Cannot register SIGUSR1 handler\n");
+    }
+    if (signal(SIGINT, sig_handler) == SIG_ERR) {
+        printf("Cannot register SIGUSR1 handler\n");
+    }
+
+    __sync_synchronize();
+
+    printf("Sample size = %d\n", MEDIAN_SAMPLE_SIZE);
+    uint8_t data[2048];
+
+    start_leader_election();
+
+    if (g_ctx.my_index == 0) {
+
+        sleep(4);
+        // stop leader election on 0 -> will trigger election
+        GET_TIMESTAMP(le_stop_tsp);
+        stop_leader_election();
+
+
+    } else if (g_ctx.my_index == 1) {
+        sleep(5);
+        rdma_ask_permission(le_ctx.buf.le_data, le_ctx.my_index, true);
+        GET_TIMESTAMP(le_perm_tsp);
+    }
+
+    printf("Done. My pid is %d\n", (int)getpid());
+    sleep(600);
+
+    stop_leader_election();
+    shutdown_leader_election_thread();
+
+    free(timestamps);
+    free(elapsed_times);
+}
+
+
+#if 0
+void consensus_propose_leader_tput() {
+    TIMESTAMP_INIT
+
+    if (signal(SIGUSR1, sig_handler) == SIG_ERR) {
+        printf("Cannot register SIGUSR1 handler\n");
+    }
+
+    timestamps = malloc((MEDIAN_SAMPLE_SIZE+1) * sizeof(*timestamps));
+    assert(timestamps);
+    memset(timestamps, 0, (MEDIAN_SAMPLE_SIZE+1) * sizeof(*timestamps));
+
+    batch_timestamps = malloc((MEDIAN_SAMPLE_SIZE+1) * sizeof(*batch_timestamps));
+    assert(batch_timestamps);
+    memset(batch_timestamps, 0, (MEDIAN_SAMPLE_SIZE+1) * sizeof(*batch_timestamps));
+
+    elapsed_times = malloc(MEDIAN_SAMPLE_SIZE * sizeof(*elapsed_times));
+    assert(elapsed_times);
+
+    __sync_synchronize();
+
+    printf("Sample size = %d\n", MEDIAN_SAMPLE_SIZE);
+    uint8_t data[2048];
+
+    start_leader_election();
+
+    if (g_ctx.my_index == 0) {
+        // Warm-up
+        propose(data, 8);
+
+        char* size_env = getenv ("SZ");
+        int sz = atoi(size_env);
+        // int sz = 128;
+
+        const int signaling = 64;
+        for (int i = 0; i < MEDIAN_SAMPLE_SIZE; ++i) {
+            GET_TIMESTAMP(timestamps[i]);
+            propose(data, sz);
+
+            if (i % signaling == 63) {
+                GET_TIMESTAMP(batch_timestamps[i/signaling]);
+            }
+            // printf("Proposed %d\n", i);
+        }
+
+        // post-processing
+        for (int i = 0; i < MEDIAN_SAMPLE_SIZE; i++) {
+            elapsed_times[i] = ELAPSED_NSEC(timestamps[i], timestamps[i+1]);
+        }
+
+    } else {
+        sleep(600);
+        log_print(g_ctx.buf.log);
+    }
+
+    printf("Done. My pid is %d\n", (int)getpid());
+    sleep(600);
+
+    stop_leader_election();
+    shutdown_leader_election_thread();
+
+    free(timestamps);
+    free(batch_timestamps);
+    free(elapsed_times);
+}
+#endif
 
 void consensus_propose_test_herd() {
     // WARNING: Do not forget to increase the MAX_INLINE_DATA constant for

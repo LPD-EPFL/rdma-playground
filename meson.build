@@ -1,5 +1,5 @@
 project('Dory RDMA consensus', 'c', 'cpp',
-    default_options : ['c_std=c11', 'cpp_std=c++14', 'warning_level=3', 'buildtype=release'],
+    default_options : ['c_std=c11', 'cpp_std=c++14', 'warning_level=3', 'buildtype=debugoptimized'],
     version : '1.0.0',
     license : 'MIT')
 
@@ -11,6 +11,7 @@ add_global_arguments(['-Wno-unused-function',
 add_global_arguments('-DCONSENSUS_INLINE', language : ['c', 'cpp'])
 add_global_arguments('-DCONSENSUS_PIN', language : ['c', 'cpp'])
 #add_global_arguments('-DCONSENSUS_SIGNAL', language : ['c', 'cpp'])
+add_global_arguments('-DLEADER_CHANGE', language : ['c', 'cpp'])
 
 
 # Used for linux CPU affinity

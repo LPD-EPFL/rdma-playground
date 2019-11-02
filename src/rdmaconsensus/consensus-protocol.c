@@ -25,7 +25,7 @@ bool propose(uint8_t *buf, size_t len) {
         }
 
         if (need_init) {
-            // rdma_ask_permission(le_ctx.buf.le_data, le_ctx.my_index, true);
+            rdma_ask_permission(le_ctx.buf.le_data, le_ctx.my_index, true);
             // // should always succeed
 
             rc = update_followers();

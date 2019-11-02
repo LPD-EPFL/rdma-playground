@@ -9,6 +9,13 @@
 #include <string>
 #include "gtest/gtest.h"
 
+#ifdef LEADER_CHANGE
+#include "timers.h"
+TIMESTAMP_T le_stop_tsp;
+TIMESTAMP_T le_change_tsp;
+TIMESTAMP_T le_perm_tsp;
+#endif
+
 #define NB_ITERATIONS 10000
 
 static int page_size;

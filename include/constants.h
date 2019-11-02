@@ -2,13 +2,12 @@
 
 // time durations
 #define SHORT_SLEEP_DURATION_NS 10 * 1000       // 10 us = 10 * 1'000 ns
-#define LE_SLEEP_DURATION_NS 999 * 1000 * 1000  // 100 ms = 100 * 1'000'000 ns
-#define LE_COUNTER_READ_PERIOD_SEC 0.1          // 100 ms
+#define LE_SLEEP_DURATION_NS 10 * 1000 * 1000  // 10ms
 
 // IB setup
 #define IP_PORT 18515
 #define IB_PORT 1
-#define MAX_SEND_WR 100
+#define MAX_SEND_WR 1024
 #define MAX_RECV_WR 1
 #define MAX_SEND_SGE 1
 #define MAX_RECV_SGE 1
@@ -35,4 +34,4 @@
 
 #define CONFIG_FILE_NAME "./config"
 
-#define BATCH_SIZE 64
+#define BATCH_SIZE 1

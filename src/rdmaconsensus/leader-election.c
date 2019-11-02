@@ -9,6 +9,13 @@ extern struct global_context g_ctx;
 extern char *config_file;
 extern int leader;
 
+#ifdef LEADER_CHANGE
+#include "timers.h"
+extern TIMESTAMP_T le_stop_tsp;
+extern TIMESTAMP_T le_change_tsp;
+extern TIMESTAMP_T le_perm_tsp;
+#endif
+
 // barriers to synchronize with the leader election thread
 // entry_barrier syncs with the beginning of the leader election loop
 // exit_barrier syncs with the exit from the leader election thread
@@ -114,23 +121,22 @@ void *leader_election(void *arg) {
         rdma_read_all_counters();
         // figure out who is leader
         // and communicate the leader to the main thread
-        leader = decide_leader();
+        int new_leader = decide_leader();
+#ifdef LEADER_CHANGE
+        if (new_leader != leader) { // leader is about to change
+            GET_TIMESTAMP(le_change_tsp);
+            printf("New leader: %d :: %lu\n", new_leader, TO_NSEC(le_change_tsp));
+        }
+#endif
+        leader = new_leader;
 
-        // while LE_SLEEP_DURATION_NS has not elapsed:
-        // check and grant permission requests
-        // TIMED_LOOP(LE_COUNTER_READ_PERIOD_SEC)
-        // check_permission_requests();
-        // TIMED_LOOP_END()
-        // clock_t begin = clock();
-        // while (((double)(clock() - begin) / CLOCKS_PER_SEC) <
-        // LE_COUNTER_READ_PERIOD_SEC) {
-        //     check_permission_requests();
-        // }
 
         // sleep
         nanosleep((const struct timespec[]){{0, LE_SLEEP_DURATION_NS}}, NULL);
     }
-
+#ifdef LEADER_CHANGE
+    sleep(600);
+#endif
     destroy_ctx(&le_ctx, true);
 
     barrier_cross(&exit_barrier);
@@ -182,7 +188,6 @@ int decide_leader() {
         counter_t *counters = le_ctx.qps[i].buf_copy.counter;
         if (counters->count_old !=
             counters->count_oldest) {  // this node has moved
-            // return i;
             // printf("Node %d is my leader\n", i);
             return i;
         }
@@ -191,7 +196,6 @@ int decide_leader() {
         // the most recent read counter as well
         if (le_ctx.completed_ops[i] == le_ctx.round_nb) {
             if (counters->count_cur != counters->count_old) {
-                // printf("Node %d is my leader\n", i);
                 return i;
             }
         }
@@ -320,6 +324,8 @@ void check_permission_requests() {
                    le_ctx.my_index, j);
             printf("rkeys before:%u, %u\n", g_ctx.qps[0].mr_write->rkey, g_ctx.qps[1].mr_write->rkey);
             // printf("vaddr before:%u, %u\n", g_ctx.qps[0].mr_write->vaddr, g_ctx.qps[1].mr_write->vaddr);
+            TIMESTAMP_T timest1, timest2;
+            GET_TIMESTAMP(timest1);
             permission_switch(
                 g_ctx.qps[g_ctx.cur_write_permission]
                     .mr_write,          // mr losing permission
@@ -328,6 +334,8 @@ void check_permission_requests() {
                 (IBV_ACCESS_REMOTE_READ | IBV_ACCESS_LOCAL_WRITE),
                 (IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE |
                  IBV_ACCESS_LOCAL_WRITE));
+            GET_TIMESTAMP(timest2);
+            printf("Permission switch took: %lu us\n", ELAPSED_NSEC(timest1, timest2));
 
             printf("rkeys after:%u, %u\n", g_ctx.qps[0].mr_write->rkey, g_ctx.qps[1].mr_write->rkey);
             // printf("vaddr after:%u, %u\n", g_ctx.qps[0].mr_write->vaddr, g_ctx.qps[1].mr_write->vaddr);
