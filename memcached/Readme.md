@@ -1,0 +1,1 @@
+Memcached will not work if you have libev install in the system, after libevent was previously installed. The reason is that the file in ~/.local/include/event.h is replaced by libev. Memcached get confused by the existence of this file and sets some defines in a bogus way during compilation.
