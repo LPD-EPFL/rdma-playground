@@ -16,6 +16,7 @@ int main() {
     // consensus_propose_noop();
 
 
+    printf("Press enter to exit\n");
     getchar();
     consensus_shutdown();
 

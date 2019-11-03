@@ -1,10 +1,10 @@
 #!/bin/bash
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
-nodes=("h193" "h194" "h195")
-#nodes=("h193" "h194" "h195" "h199" "h200")
-#nodes=("h193" "h194" "h195" "h199" "h200" "h202" "h203")
-#nodes=("h193" "h194" "h195" "h199" "h200" "h202" "h203" "h210" "h211")
+# nodes=("h193" "h194" "h195")
+# nodes=("h193" "h194" "h195" "h199" "h200")
+# nodes=("h193" "h194" "h195" "h199" "h200" "h202" "h203")
+nodes=("h193" "h194" "h195" "h199" "h200" "h202" "h203" "h210" "h211")
 
 config_toml=$(cat <<EOF
 [registry]
@@ -34,7 +34,6 @@ startme() {
         fi
 
 ssh "$USER@${nodes[$j]}" /bin/bash << EOF
-    module load tmux
     tmux start-server
     tmux kill-session -t peregrin 2> /dev/null
     killall memcached
@@ -47,7 +46,7 @@ ssh "$USER@${nodes[$j]}" /bin/bash << EOF
     sed -i "s/#host#/$ip/" config.${nodes[$j]}.toml
     sed -i "s/#clients#/${#nodes[@]}/" config.${nodes[$j]}.toml
     sed -i "s/#id#/$j/" config.${nodes[$j]}.toml
-    tmux send-keys -t peregrin:main "CONFIG=config.${nodes[$j]}.toml $DIR/builddir/propose-test" C-m
+    tmux send-keys -t peregrin:main "CONFIG=config.${nodes[$j]}.toml SZ=$SZ $DIR/builddir/propose-test" C-m
 EOF
 
     done
@@ -56,7 +55,7 @@ EOF
 
 stopme() {
     for ((j=0; j<${#nodes[@]}; j++)); do
-        ssh "$USER@${nodes[$j]}" "module load tmux; killall memcached; tmux kill-session -t peregrin"
+        ssh "$USER@${nodes[$j]}" "killall memcached; tmux kill-session -t peregrin"
     done
 }
 
