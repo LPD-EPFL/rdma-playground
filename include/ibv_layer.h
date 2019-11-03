@@ -167,6 +167,25 @@ static int wait_for_n_inner(int n, uint64_t round_nb,
     }
 }
 
+#if 0
+// this code fragment shows how to print a stack trace (to stderr)
+// on Linux using the functions provided by the GNU libc
+
+#include <execinfo.h>
+
+#define MAX_STACK_LEVELS 50
+
+// helper-function to print the current stack trace
+static void print_stacktrace()
+{
+  void *buffer[MAX_STACK_LEVELS];
+  int levels = backtrace(buffer, MAX_STACK_LEVELS);
+
+  // print to stderr (fd = 2), and remove this function from the trace
+  backtrace_symbols_fd(buffer + 1, levels - 1, 2);
+}
+#endif
+
 static int post_send_inner(struct ibv_qp *qp, void *buf, uint32_t len,
                            uint32_t lkey, uint32_t rkey, uint64_t remote_addr,
                            enum ibv_wr_opcode opcode, uint64_t wrid,
@@ -195,6 +214,9 @@ static int post_send_inner(struct ibv_qp *qp, void *buf, uint32_t len,
 #endif
     wr.wr.rdma.remote_addr = remote_addr;
     wr.wr.rdma.rkey = rkey;
+
+    printf("Using rkey %u\n", rkey);
+    // print_stacktrace();
 
     int rc = ibv_post_send(qp, &wr, &bad_wr);
 

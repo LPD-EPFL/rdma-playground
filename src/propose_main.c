@@ -9,7 +9,8 @@ int main() {
 
     // Used for barebones test of librdmaconsensus
     // consensus_propose_leader_median();
-    consensus_propose_test2();
+    // consensus_propose_test_rereg();
+    consensus_propose_test1();  
 
     // // Used for testing of initialization
     // consensus_propose_noop();

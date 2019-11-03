@@ -213,6 +213,7 @@ static void wait_for_perm_ack(int n) {
             if (le_ctx.buf.le_data->perm_reqs_acks[i].ack != 0) {
                 printf("Got ack from %lu: %lu\n", i, le_ctx.buf.le_data->perm_reqs_acks[i].ack);
                 g_ctx.qps[i].rc_remote_connection.rkey = le_ctx.buf.le_data->perm_reqs_acks[i].ack;
+                g_ctx.qps[i].uc_remote_connection.rkey = g_ctx.qps[i].rc_remote_connection.rkey;
                 acks += 1;
                 le_ctx.buf.le_data->perm_reqs_acks[i].ack = 0;
             }

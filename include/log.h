@@ -9,7 +9,7 @@ extern "C" {
 #include <sys/mman.h>
 
 #define DEFAULT_VALUE_SIZE 8  // value size if it is uint64_t
-#define DEFAULT_LOG_LENGTH (4ul * 1024 * 1024 * 1024)
+#define DEFAULT_LOG_LENGTH (4ul*1024*1024*1024)
 #define CACHE_LINE_SIZE 64
 
 struct value_t {
@@ -95,7 +95,8 @@ static uint64_t le_data_get_remote_address(le_data_t *local_le_data,
 // len = the size in bytes to allocate for slots
 static log_t *log_new() {
     size_t size = DEFAULT_LOG_LENGTH;
-    #if 0
+
+#if 1
     void *m = mmap(NULL, size, PROT_READ | PROT_WRITE,
 
                    MAP_SHARED | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
@@ -110,12 +111,12 @@ static log_t *log_new() {
     assert((uint64_t)m % alignment == 0 && "Not aligned");
 
     log_t *log = (log_t *)m;
-    #endif
+#endif
 
-    log_t *log = (log_t*) malloc(size);
-    if (NULL == log) {
-        return NULL;
-    }
+    // log_t *log = (log_t*) malloc(size);
+    // if (NULL == log) {
+    //     return NULL;
+    // }
 
     memset(log, 0, size);
     log->len = size - sizeof(log_t);

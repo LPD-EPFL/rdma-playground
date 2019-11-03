@@ -20,7 +20,7 @@ extern struct global_context le_ctx;
 // extern volatile bool stop_le;
 
 // Benchmarking code - Start
-const int MEDIAN_SAMPLE_SIZE = 1000000;
+const int MEDIAN_SAMPLE_SIZE = 100;
 
 TIMESTAMP_T *timestamps = NULL;
 uint64_t *elapsed_times = NULL;
@@ -220,7 +220,7 @@ void consensus_propose_test2() {
         printf("Average latency = %.2f\n", avg_latency);
     } else {
         sleep(5);
-        log_print(g_ctx.buf.log);
+        // log_print(g_ctx.buf.log);
     }
 
     stop_leader_election();
@@ -308,6 +308,7 @@ void consensus_propose_leader_median() {
         sleep(600);
         log_print(g_ctx.buf.log);
     }
+    printf("Done. My pid is %d\n", (int)getpid());
 
     printf("Done\n");
     sleep(600);
@@ -317,6 +318,67 @@ void consensus_propose_leader_median() {
 
     free(timestamps);
     free(elapsed_times);
+}
+
+void consensus_propose_test_rereg() {
+    TIMESTAMP_INIT
+
+    if (signal(SIGUSR1, sig_handler) == SIG_ERR) {
+        printf("Cannot register SIGUSR1 handler\n");
+    }
+
+    timestamps = malloc((MEDIAN_SAMPLE_SIZE+1) * sizeof(*timestamps));
+    assert(timestamps);
+    memset(timestamps, 0, (MEDIAN_SAMPLE_SIZE+1) * sizeof(*timestamps));
+
+    elapsed_times = malloc(MEDIAN_SAMPLE_SIZE * sizeof(*elapsed_times));
+    assert(elapsed_times);
+
+    __sync_synchronize();
+
+    printf("Sample size = %d\n", MEDIAN_SAMPLE_SIZE);
+
+    start_leader_election();
+
+    if (g_ctx.my_index == 0) {
+        // Warm-up
+
+        int p[2];
+
+        p[0] = (IBV_ACCESS_REMOTE_READ | IBV_ACCESS_LOCAL_WRITE);
+        p[1] = (IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE |
+             IBV_ACCESS_LOCAL_WRITE);
+
+        for (int i = 0; i < MEDIAN_SAMPLE_SIZE; ++i) {
+            GET_TIMESTAMP(timestamps[i]);
+
+            ibv_rereg_mr(g_ctx.qps[(i%2)].mr_write,
+                        IBV_REREG_MR_CHANGE_ACCESS,
+                        g_ctx.pd, g_ctx.buf.log, g_ctx.len,
+                        p[(i%2)]);            
+        }
+
+        GET_TIMESTAMP(timestamps[MEDIAN_SAMPLE_SIZE]);
+
+        // post-processing
+        for (int i = 0; i < MEDIAN_SAMPLE_SIZE; i++) {
+            elapsed_times[i] = ELAPSED_NSEC(timestamps[i], timestamps[i+1]);
+        }
+
+
+    } else {
+        sleep(6000);
+    }
+    printf("Done. My pid is %d\n", (int)getpid());
+
+    printf("Done\n");
+    sleep(6000);
+
+    stop_leader_election();
+    shutdown_leader_election_thread();
+
+    free(timestamps);
+    free(elapsed_times);    
 }
 
 void consensus_propose_test_herd() {
