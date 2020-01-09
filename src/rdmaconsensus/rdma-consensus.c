@@ -28,6 +28,8 @@ void init_buf_le(struct global_context *ctx) {
 };
 
 void *threadFunc(void *arg) {
+
+    printf("threadFunc id : %d\n",(int)getpid());
     struct global_context *ctx = (struct global_context *) arg;
 
     volatile uint8_t *log_slab = (volatile uint8_t *)(ctx->buf.log->slots);

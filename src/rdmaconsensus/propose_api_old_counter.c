@@ -29,18 +29,13 @@ uint64_t *elapsed_times = NULL;
 // uint64_t timestamp_idx = 0;
 
 #define MAX_BUFFER_SIZE 2048
-
-typedef struct {
-char buf[MAX_BUFFER_SIZE];
-int occupied;
-int len;
-pthread_mutex_t mutex;
-pthread_cond_t more;
-pthread_cond_t less;
-} buffer_t;
-
-buffer_t buffer;
-
+uint8_t abuffer[MAX_BUFFER_SIZE];
+size_t buffer_len;
+atomic_int counter_p;
+atomic_int counter_c;
+//pthread_mutex_t ready;
+//atomic_flag ready=ATOMIC_FLAG_INIT;
+//atomic_flag ended=ATOMIC_FLAG_INIT;
 
 void sig_handler(int signo) {
   if (signo == SIGUSR1) {
@@ -112,38 +107,22 @@ void ibv_devinfo(void) {
 //ADDED by loic
 
 void * propose_thread(void *arg){
-        buffer_t* b = &buffer;
+	atomic_init(&counter_p,0);
+	atomic_init(&counter_c,0);
+	printf("start consumer id:%d\n",(int)getpid());
+	int counter = 0;	
 	while(true){
-	    pthread_mutex_lock(&(b->mutex));
-        while(b->occupied <= 0)
-               pthread_cond_wait(&b->more, &b->mutex);
-
-        assert(b->occupied > 0);
-
-        propose(b->buf,b->len);
-        b->occupied--;
-
-		    /* now: either b->occupied > 0 and b->nextout is the index
-		     *        of the next occupied slot in the buffer, or
-		     *               b->occupied == 0 and b->nextout is the index of the next
-		     *                      (empty) slot that will be filled by a producer (such as
-		     *       :w
-		     *       b->nextout == b->nextin) */
-
-       pthread_cond_signal(&b->less);
-       pthread_mutex_unlock(&b->mutex);
-	
+		while(atomic_load_explicit(&counter_p,memory_order_relaxed) <= counter){}
+		propose(abuffer,buffer_len);
+		counter++;
+		atomic_store_explicit(&counter_c,counter,memory_order_relaxed);
 	}
-
 }
 
 void launch_propose_thread(){
-        pthread_mutex_init(&(buffer.mutex), NULL);
-	pthread_cond_init( &buffer.more, NULL);
-	pthread_cond_init( &buffer.less, NULL);
+
 	pthread_t threadId;
 	int err = pthread_create(&threadId,NULL,&propose_thread,NULL);
-	printf("start consumer id:%d\n",(int)threadId);
 
 	if(err){
 		fprintf(stderr,"Thread creation failed: %s\n",strerror(err));
@@ -229,33 +208,17 @@ void consensus_stop_leader_election() {
 }
 
 //bool consensus_propose(uint8_t *buf, size_t len) { return propose(buf, len); }
-bool first_time = true;
+int local_counter_p=0;
 bool consensus_propose(uint8_t *buf, size_t len) {
-	buffer_t* b = &buffer;
-	
 	if(len>MAX_BUFFER_SIZE){
 	  fprintf(stderr,"ERROR: buffer too big to be proposed");
 	  return false;
         }
-
-	pthread_mutex_lock(&b->mutex);
-   
-	memcpy(b->buf,buf,len);
-	b->len =len;
-
-
-	b->occupied++;
-
-		        /* now: either b->occupied < BSIZE and b->nextin is the index
-			 *        of the next empty slot in the buffer, or
-			 *               b->occupied == BSIZE and b->nextin is the index of the
-			 *                      next (occupied) slot that will be emptied by a consumer
-			 *                             (such as b->nextin == b->nextout) */
-
-	pthread_cond_signal(&b->more);
-    while (b->occupied >= 1)
-	            pthread_cond_wait(&b->less, &b->mutex);
-	pthread_mutex_unlock(&b->mutex);
+	memcpy(abuffer,buf,len);
+	buffer_len = len;
+	local_counter_p +=1;
+	atomic_store_explicit(&counter_p,local_counter_p,memory_order_relaxed);
+	while(atomic_load_explicit(&counter_c,memory_order_relaxed)<local_counter_p){}
 		
 }
 

@@ -211,7 +211,7 @@ static void wait_for_perm_ack(int n) {
     while (acks < n) {
         for (uint64_t i = 0; i < len; ++i) {
             if (le_ctx.buf.le_data->perm_reqs_acks[i].ack != 0) {
-                printf("Got ack from %lu: %lu\n", i, le_ctx.buf.le_data->perm_reqs_acks[i].ack);
+                //printf("Got ack from %lu: %lu\n", i, le_ctx.buf.le_data->perm_reqs_acks[i].ack);
                 g_ctx.qps[i].rc_remote_connection.rkey = le_ctx.buf.le_data->perm_reqs_acks[i].ack;
                 g_ctx.qps[i].uc_remote_connection.rkey = g_ctx.qps[i].rc_remote_connection.rkey;
                 acks += 1;
@@ -276,8 +276,8 @@ static void send_perm_ack(int index) {
     le_ctx.buf.le_data->perm_reqs_acks[my_index].ack = g_ctx.qps[index].mr_write->rkey;
     local_address = &le_ctx.buf.le_data->perm_reqs_acks[my_index].ack;
 
-    printf("Sending ack to %d, my index in their array is %d, ack is %lu\n", index,
-           my_index, *(uint64_t*)local_address);
+    //printf("Sending ack to %d, my index in their array is %d, ack is %lu\n", index,
+           //my_index, *(uint64_t*)local_address);
 
     req_size = sizeof(uint64_t);
 
@@ -317,9 +317,9 @@ void check_permission_requests() {
                     ? i
                     : i - 1;  // i indexes into perm_reqs (n entries total), j
                               // indexes into qps (n-1 entries total)
-            printf("Permission request from %d, my_index = %d, j = %d\n", i,
-                   le_ctx.my_index, j);
-            printf("rkeys before:%u, %u\n", g_ctx.qps[0].mr_write->rkey, g_ctx.qps[1].mr_write->rkey);
+            //printf("Permission request from %d, my_index = %d, j = %d\n", i,
+                   //le_ctx.my_index, j);
+            //printf("rkeys before:%u, %u\n", g_ctx.qps[0].mr_write->rkey, g_ctx.qps[1].mr_write->rkey);
             // printf("vaddr before:%u, %u\n", g_ctx.qps[0].mr_write->vaddr, g_ctx.qps[1].mr_write->vaddr);
             permission_switch(
                 g_ctx.qps[g_ctx.cur_write_permission]
@@ -330,7 +330,7 @@ void check_permission_requests() {
                 (IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE |
                  IBV_ACCESS_LOCAL_WRITE));
 
-            printf("rkeys after:%u, %u\n", g_ctx.qps[0].mr_write->rkey, g_ctx.qps[1].mr_write->rkey);
+            //printf("rkeys after:%u, %u\n", g_ctx.qps[0].mr_write->rkey, g_ctx.qps[1].mr_write->rkey);
             // printf("vaddr after:%u, %u\n", g_ctx.qps[0].mr_write->vaddr, g_ctx.qps[1].mr_write->vaddr);
 
             g_ctx.cur_write_permission = j;
